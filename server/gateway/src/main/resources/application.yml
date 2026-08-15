@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: hermes-gateway
+
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/hermes}
+    username: ${POSTGRES_USER:hermes}
+    password: ${POSTGRES_PASSWORD:hermes}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update # auto-create schema on first run
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  cassandra:
+    keyspace-name: hermes
+    contact-points: ${CASSANDRA_HOST:localhost}
+    port: ${CASSANDRA_PORT:9042}
+    local-datacenter: ${CASSANDRA_DC:datacenter1}
+    schema-action: none # schema managed via schema.cql
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+
+logging:
+  level:
+    com.hermes.gateway: DEBUG
+    org.springframework.web.socket: INFO
+    org.apache.kafka: WARN

@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: hermes-worker
+
+  cassandra:
+    contact-points: localhost:9042
+    keyspace-name: hermes
+    local-datacenter: datacenter1
+    schema-action: none
+    request:
+      timeout: 5s
+      consistency: LOCAL_QUORUM
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000ms
+      connect-timeout: 1000ms
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: hermes-worker
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      max-poll-records: 50
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+
+logging:
+  level:
+    com.hermes.worker: DEBUG
+    org.springframework.kafka: INFO

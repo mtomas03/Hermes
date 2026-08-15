@@ -1,6 +1,7 @@
 plugins {
     java
     id("org.springframework.boot") version "3.2.5"
+    id("io.spring.dependency-management") version "1.1.4"
     id("com.gradleup.shadow") version "9.3.0"
 }
 
@@ -21,5 +22,11 @@ repositories {
 }
 
 dependencies {
-    
+
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.postgresql:postgresql")
+    implementation("org.springframework.boot:spring-boot-starter-data-cassandra")
+
 }
