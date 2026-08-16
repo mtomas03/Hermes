@@ -21,7 +21,11 @@ repositories {
 }
 
 dependencies {
-
     implementation("org.springframework:spring-context:6.2.7")
+    implementation("jakarta.annotation:jakarta.annotation-api:3.0.0")
 
+    implementation("org.xerial:sqlite-jdbc:3.46.1.3")
+
+    implementation("org.slf4j:slf4j-api:2.0.16")
+    implementation("ch.qos.logback:logback-classic:1.5.13")
 }
