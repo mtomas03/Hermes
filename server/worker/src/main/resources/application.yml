@@ -35,6 +35,19 @@ spring:
       properties:
         enable.idempotence: true
 
+hermes:
+  topics:
+    message-created: message-created
+    message-acknowledged: message-acknowledged
+    message-delivery: message-delivery
+  delivery:
+    max-retry-attempts: 3
+    retry-backoff-ms: 1000
+  presence:
+    key-prefix: "hermes:presence:"
+    field-online: online
+    field-gateway-id: gatewayId
+
 logging:
   level:
     com.hermes.worker: DEBUG

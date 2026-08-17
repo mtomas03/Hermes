@@ -14,7 +14,7 @@ import org.springframework.util.backoff.FixedBackOff;
 /**
  * Kafka consumer and error-handler configuration.
  *
- * <p>Retry policy: fixed backoff with a bounded number of attempts.
+ * <p> Retry policy: fixed backoff with a bounded number of attempts.
  * When all retries are exhausted the record is logged and skipped.
  */
 @Configuration
