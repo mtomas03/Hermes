@@ -44,7 +44,7 @@ public class MessageRepository {
             ps.setString(3, msg.getSenderUsername());
             ps.setString(4, msg.getRecipientUsername());
             ps.setString(5, msg.getContent());
-            ps.setLong(6, msg.getTimestamp().toEpochMilli());
+            ps.setLong(6, msg.getPhysicalTimestamp().toEpochMilli());
             ps.setString(7, msg.getStatus().name());
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -126,7 +126,8 @@ public class MessageRepository {
                 rs.getString("sender_username"),
                 rs.getString("recipient_username"),
                 rs.getString("content"),
-                Instant.ofEpochMilli(rs.getLong("message_timestamp")),
+                rs.getLong("logical_timestamp"),
+                Instant.ofEpochMilli(rs.getLong("physical_timestamp")),
                 MessageStatus.valueOf(rs.getString("status")));
     }
 }

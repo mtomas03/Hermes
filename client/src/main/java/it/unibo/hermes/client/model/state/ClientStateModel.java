@@ -64,7 +64,7 @@ public class ClientStateModel {
                     .anyMatch(m -> m.getMessageId().equals(msg.getMessageId()));
             if (!exists) {
                 activeMessages.add(msg);
-                activeMessages.sort(Comparator.comparing(Message::getTimestamp));
+                activeMessages.sort(Comparator.comparing(Message::getPhysicalTimestamp));
                 pcs.firePropertyChange(PROP_ACTIVE_MESSAGES, null, new ArrayList<>(activeMessages));
             }
         });
