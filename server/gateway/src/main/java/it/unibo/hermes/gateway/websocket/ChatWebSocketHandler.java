@@ -186,7 +186,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
      *
      * @param session  the WebSocket session
      * @param username the username of the acknowledging client
-     * @param msg     the acknowledgement message containing the target message ID
+     * @param msg      the acknowledgement message containing the target message ID
      */
     private void handleAck(WebSocketSession session, String username, WsMessage msg) {
         if (msg.getMessageId() == null) {
