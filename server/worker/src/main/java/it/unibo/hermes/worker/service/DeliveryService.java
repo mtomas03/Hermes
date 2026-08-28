@@ -4,6 +4,7 @@ import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.domain.PresenceInfo;
 import it.unibo.hermes.worker.event.MessageCreatedEvent;
 import it.unibo.hermes.worker.event.MessageDeliveryEvent;
+import it.unibo.hermes.worker.producer.DeliveryEventProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -29,18 +30,22 @@ public class DeliveryService {
 
     private final PersistenceService persistenceService;
     private final RedisPresenceService presenceService;
+    private final DeliveryEventProducer deliveryEventProducer;
 
     /**
      * Creates a new {@code DeliveryService}.
      *
      * @param persistenceService    the persistence service for storing messages and updating statuses
      * @param presenceService       the Redis presence service for checking recipient availability
+     * @param deliveryEventProducer the producer for publishing events to delivery Kafka topics
      */
     public DeliveryService(
             PersistenceService persistenceService,
-            RedisPresenceService presenceService) {
+            RedisPresenceService presenceService,
+            DeliveryEventProducer deliveryEventProducer) {
         this.persistenceService = persistenceService;
         this.presenceService = presenceService;
+        this.deliveryEventProducer = deliveryEventProducer;
     }
 
     /**
@@ -77,7 +82,18 @@ public class DeliveryService {
      * @param presence the presence and routing information for the online recipient
      */
     private void handleOnlineDelivery(MessageCreatedEvent event, PresenceInfo presence) {
-        // TODO: Implement the logic to send a MessageDeliveryEvent to the gateway using Kafka.
+        try {
+            deliveryEventProducer.publishDeliveryEvent(event, presence.gatewayId());
+            persistenceService.updateDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
+            log.info("Message {} forwarded to gateway {} for online recipient {}",
+                    event.messageId(), presence.gatewayId(), event.recipientUsername());
+        } catch (Exception e) {
+            // The delivery event publish failed. The message is safely in Cassandra
+            // with PENDING status; marking it STORED lets the Gateway sync it later.
+            log.warn("Failed to forward message {} to gateway {} - falling back to STORED: {}",
+                    event.messageId(), presence.gatewayId(), e.getMessage());
+            persistenceService.updateDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
+        }
     }
 
     /**

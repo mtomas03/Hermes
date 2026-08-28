@@ -44,17 +44,29 @@ public class ConversationMessageKey implements Serializable {
         this.messageId = messageId;
     }
 
-    public String getConversationId() { return conversationId; }
+    public String getConversationId() {
+        return conversationId;
+    }
 
-    public void setConversationId(String conversationId) { this.conversationId = conversationId; }
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
 
-    public long getLogicalTimestamp() { return logicalTimestamp; }
+    public long getLogicalTimestamp() {
+        return logicalTimestamp;
+    }
 
-    public void setLogicalTimestamp(long logicalTimestamp) { this.logicalTimestamp = logicalTimestamp; }
+    public void setLogicalTimestamp(long logicalTimestamp) {
+        this.logicalTimestamp = logicalTimestamp;
+    }
 
-    public UUID getMessageId() { return messageId; }
+    public UUID getMessageId() {
+        return messageId;
+    }
 
-    public void setMessageId(UUID messageId) { this.messageId = messageId; }
+    public void setMessageId(UUID messageId) {
+        this.messageId = messageId;
+    }
 
     @Override
     public boolean equals(Object o) {

@@ -36,7 +36,8 @@ public class MessagePrimaryKey implements Serializable {
             ordering = Ordering.ASCENDING)
     private UUID messageId;
 
-    protected MessagePrimaryKey() {}
+    protected MessagePrimaryKey() {
+    }
 
     public MessagePrimaryKey(String conversationId, long logicalTimestamp, UUID messageId) {
         this.conversationId = conversationId;

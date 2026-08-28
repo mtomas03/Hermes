@@ -16,7 +16,8 @@ public class MessageEvent {
     private long logicalTimestamp;
     private Instant physicalTimestamp;
 
-    public MessageEvent() {}
+    public MessageEvent() {
+    }
 
     /**
      * Creates a new message event.

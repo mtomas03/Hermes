@@ -31,7 +31,8 @@ public class User {
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
-    protected User() {}
+    protected User() {
+    }
 
     /**
      * Creates a new authenticated user.

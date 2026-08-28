@@ -63,35 +63,67 @@ public class MessageByIdEntity {
         this.deliveryStatus = deliveryStatus;
     }
 
-    public UUID getMessageId() { return messageId; }
+    public UUID getMessageId() {
+        return messageId;
+    }
 
-    public void setMessageId(UUID messageId) { this.messageId = messageId; }
+    public void setMessageId(UUID messageId) {
+        this.messageId = messageId;
+    }
 
-    public UUID getConversationId() { return conversationId; }
+    public UUID getConversationId() {
+        return conversationId;
+    }
 
-    public void setConversationId(UUID conversationId) { this.conversationId = conversationId; }
+    public void setConversationId(UUID conversationId) {
+        this.conversationId = conversationId;
+    }
 
-    public String getSenderId() { return senderId; }
+    public String getSenderId() {
+        return senderId;
+    }
 
-    public void setSenderId(String senderId) { this.senderId = senderId; }
+    public void setSenderId(String senderId) {
+        this.senderId = senderId;
+    }
 
-    public String getRecipientId() { return recipientId; }
+    public String getRecipientId() {
+        return recipientId;
+    }
 
-    public void setRecipientId(String recipientId) { this.recipientId = recipientId; }
+    public void setRecipientId(String recipientId) {
+        this.recipientId = recipientId;
+    }
 
-    public String getContent() { return content; }
+    public String getContent() {
+        return content;
+    }
 
-    public void setContent(String content) { this.content = content; }
+    public void setContent(String content) {
+        this.content = content;
+    }
 
-    public long getLogicalTimestamp() { return logicalTimestamp; }
+    public long getLogicalTimestamp() {
+        return logicalTimestamp;
+    }
 
-    public void setLogicalTimestamp(long logicalTimestamp) { this.logicalTimestamp = logicalTimestamp; }
+    public void setLogicalTimestamp(long logicalTimestamp) {
+        this.logicalTimestamp = logicalTimestamp;
+    }
 
-    public Instant getPhysicalTimestamp() { return physicalTimestamp; }
+    public Instant getPhysicalTimestamp() {
+        return physicalTimestamp;
+    }
 
-    public void setPhysicalTimestamp(Instant physicalTimestamp) { this.physicalTimestamp = physicalTimestamp; }
+    public void setPhysicalTimestamp(Instant physicalTimestamp) {
+        this.physicalTimestamp = physicalTimestamp;
+    }
 
-    public String getDeliveryStatus() { return deliveryStatus; }
+    public String getDeliveryStatus() {
+        return deliveryStatus;
+    }
 
-    public void setDeliveryStatus(String deliveryStatus) { this.deliveryStatus = deliveryStatus; }
+    public void setDeliveryStatus(String deliveryStatus) {
+        this.deliveryStatus = deliveryStatus;
+    }
 }

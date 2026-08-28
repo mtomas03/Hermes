@@ -27,7 +27,7 @@ public record PresenceInfo(
     /**
      * Creates a {@link PresenceInfo} instance for an online user connected to a gateway.
      *
-     * @param username the unique name of the user
+     * @param username  the unique name of the user
      * @param gatewayId the identifier of the gateway hosting the active session
      * @return a presence record with {@code online = true} and the assigned gateway ID
      */

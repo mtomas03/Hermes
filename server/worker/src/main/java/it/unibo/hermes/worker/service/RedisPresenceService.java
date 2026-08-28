@@ -58,7 +58,7 @@ public class RedisPresenceService {
      *
      * @param username the unique name of the user to check
      * @return an {@link Optional} containing {@link PresenceInfo} if presence data exists;
-     *         {@link Optional#empty()} if no entry is found or if Redis is unreachable
+     * {@link Optional#empty()} if no entry is found or if Redis is unreachable
      */
     public Optional<PresenceInfo> getPresence(String username) {
         String redisKey = keyPrefix + username;

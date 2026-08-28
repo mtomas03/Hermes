@@ -25,7 +25,8 @@ public class WsMessage {
     private String errorCode;
     private String reason;
 
-    public WsMessage() {}
+    public WsMessage() {
+    }
 
     /**
      * Creates a heartbeat PONG response message.

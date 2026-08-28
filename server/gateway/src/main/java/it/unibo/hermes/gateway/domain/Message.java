@@ -35,7 +35,8 @@ public class Message {
     @Column("status")
     private String status;
 
-    protected Message() {}
+    protected Message() {
+    }
 
     public Message(String conversationId,
                    long logicalTimestamp,
