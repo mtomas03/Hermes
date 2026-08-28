@@ -50,7 +50,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "com.hermes.gateway.event"
+        spring.json.trusted.packages: "it.unibo.hermes.gateway.event"
 
 hermes:
   jwt:
@@ -74,6 +74,6 @@ hermes:
 
 logging:
   level:
-    com.hermes.gateway: DEBUG
+    it.unibo.hermes.gateway: DEBUG
     org.springframework.web.socket: INFO
     org.apache.kafka: WARN

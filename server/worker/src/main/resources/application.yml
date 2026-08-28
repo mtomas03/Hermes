@@ -50,5 +50,5 @@ hermes:
 
 logging:
   level:
-    com.hermes.worker: DEBUG
+    it.unibo.hermes.worker: DEBUG
     org.springframework.kafka: INFO

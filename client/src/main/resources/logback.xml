@@ -16,7 +16,7 @@
         </encoder>
     </appender>
 
-    <logger name="it.unibo.hermes" level="DEBUG"/>
+    <logger name="it.unibo.hermes.client" level="DEBUG"/>
     <logger name="org.springframework" level="WARN"/>
     <logger name="reactor.netty" level="WARN"/>
     <logger name="io.netty" level="WARN"/>
