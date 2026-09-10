@@ -20,7 +20,7 @@ public class MessageByIdEntity {
     private UUID messageId;
 
     @Column("conversation_id")
-    private UUID conversationId;
+    private String conversationId;
 
     @Column("sender_id")
     private String senderId;
@@ -52,7 +52,8 @@ public class MessageByIdEntity {
      * @param physicalTimestamp the server creation physical timestamp
      * @param deliveryStatus    the current delivery status name
      */
-    public MessageByIdEntity(UUID messageId, UUID conversationId, String senderId, String recipientId, String content, long logicalTimestamp, Instant physicalTimestamp, String deliveryStatus) {
+    public MessageByIdEntity(UUID messageId, String conversationId, String senderId, String recipientId,
+                             String content, long logicalTimestamp, Instant physicalTimestamp, String deliveryStatus) {
         this.messageId = messageId;
         this.conversationId = conversationId;
         this.senderId = senderId;
@@ -71,11 +72,11 @@ public class MessageByIdEntity {
         this.messageId = messageId;
     }
 
-    public UUID getConversationId() {
+    public String getConversationId() {
         return conversationId;
     }
 
-    public void setConversationId(UUID conversationId) {
+    public void setConversationId(String conversationId) {
         this.conversationId = conversationId;
     }
 

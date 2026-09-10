@@ -1,5 +1,6 @@
 package it.unibo.hermes.worker.service;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.entity.ConversationMessageEntity;
 import it.unibo.hermes.worker.entity.ConversationMessageKey;
@@ -49,6 +50,23 @@ public class PersistenceService {
         this.cassandraOperations = cassandraOperations;
     }
 
+    @NonNull
+    private static ConversationMessageEntity getByConversation(MessageCreatedEvent event, UUID messageId, Instant physical) {
+        ConversationMessageKey key = new ConversationMessageKey(
+                event.conversationId(),
+                event.logicalTimestamp(),
+                messageId
+        );
+        return new ConversationMessageEntity(
+                key,
+                event.senderUsername(),
+                event.recipientUsername(),
+                event.content(),
+                DeliveryStatus.PENDING.name(),
+                physical
+        );
+    }
+
     /**
      * Persists a newly created message with an initial status of {@link DeliveryStatus#PENDING}
      * across both Cassandra tables.
@@ -61,7 +79,7 @@ public class PersistenceService {
      */
     public void persistMessage(MessageCreatedEvent event) {
         UUID messageId = UUID.fromString(event.messageId());
-        UUID conversationId = UUID.fromString(event.conversationId());
+        String conversationId = event.conversationId();
         Instant physical = Instant.ofEpochMilli(event.physicalTimestamp());
 
         try {
@@ -86,19 +104,7 @@ public class PersistenceService {
             messageByIdRepository.save(byId);
 
             // 2. Insert into messages table (conversation-ordered)
-            ConversationMessageKey key = new ConversationMessageKey(
-                    conversationId,
-                    event.logicalTimestamp(),
-                    messageId
-            );
-            ConversationMessageEntity byConversation = new ConversationMessageEntity(
-                    key,
-                    event.senderUsername(),
-                    event.recipientUsername(),
-                    event.content(),
-                    DeliveryStatus.PENDING.name(),
-                    physical
-            );
+            ConversationMessageEntity byConversation = getByConversation(event, messageId, physical);
             conversationMessageRepository.save(byConversation);
 
             log.debug("Message {} persisted as PENDING", messageId);
