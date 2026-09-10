@@ -40,7 +40,7 @@ public class MessageService {
                         String recipientUsername,
                         String content) {
 
-        String clientMessageId = "client-" + UUID.randomUUID();
+        String clientMessageId = UUID.randomUUID().toString();
         Message local = new Message(
                 clientMessageId,
                 conversationId,

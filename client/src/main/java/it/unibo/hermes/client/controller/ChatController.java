@@ -53,7 +53,7 @@ public class ChatController {
         stateModel.setSelectedConversation(conv);
         List<Message> msgs = persistence.loadMessages(conv.getConversationId());
         stateModel.replaceMessages(msgs);
-        log.debug("Selected {} – {} local messages", conv.getConversationId(), msgs.size());
+        log.debug("Selected {} - {} local messages", conv.getConversationId(), msgs.size());
     }
 
     /**
@@ -132,7 +132,7 @@ public class ChatController {
                 .anyMatch(c -> c.getConversationId().equals(convId));
         if (!exists) {
             // Prepend so newest appears at top
-            stateModel.getConversations().add(0, conv);
+            stateModel.getConversations().addFirst(conv);
         }
 
         selectConversation(conv);
@@ -140,7 +140,7 @@ public class ChatController {
 
     private String buildConvId(String username1, String username2) {
         return username1.compareTo(username2) < 0
-                ? "conv-" + username1 + "-" + username2
-                : "conv-" + username2 + "-" + username1;
+                ? username1 + "-" + username2
+                : username2 + "-" + username1;
     }
 }
