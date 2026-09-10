@@ -40,9 +40,9 @@ public class MessageService {
                         String recipientUsername,
                         String content) {
 
-        String clientMessageId = "client-" + UUID.randomUUID();
+        String messageId = UUID.randomUUID().toString();
         Message local = new Message(
-                clientMessageId,
+                messageId,
                 conversationId,
                 senderUsername,
                 recipientUsername,
@@ -52,19 +52,19 @@ public class MessageService {
                 MessageStatus.PENDING);
 
         persistence.saveMessage(local);
-        log.debug("Saved outbound message locally: {}", clientMessageId);
+        log.debug("Saved outbound message locally: {}", messageId);
 
         OutboundMessageDto dto = new OutboundMessageDto(
-                conversationId, senderUsername,
+                messageId, conversationId, senderUsername,
                 recipientUsername, content,
                 null, Instant.now());
         boolean sent = wsService.sendMessage(dto);
         if (sent) {
-            persistence.updateMessageStatus(clientMessageId, MessageStatus.SENT);
+            persistence.updateMessageStatus(messageId, MessageStatus.SENT);
             local.setStatus(MessageStatus.SENT);
-            log.info("Message submitted via WebSocket: {}", clientMessageId);
+            log.info("Message submitted via WebSocket: {}", messageId);
         } else {
-            log.warn("Message queued locally (WebSocket unavailable): {}", clientMessageId);
+            log.warn("Message queued locally (WebSocket unavailable): {}", messageId);
         }
         return local;
     }

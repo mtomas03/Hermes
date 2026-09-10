@@ -91,12 +91,13 @@ public class SyncService {
             persistence.saveMessage(msg);
         }
 
+        /* TODO: Uncomment when cursor persistence is implemented
         if (response.cursorMessageId() != null) {
             SyncCursor cursor = new SyncCursor(
                     response.conversationId(),
                     response.cursorMessageId(),
                     Instant.now());
             persistence.saveCursor(cursor);
-        }
+        }*/
     }
 }

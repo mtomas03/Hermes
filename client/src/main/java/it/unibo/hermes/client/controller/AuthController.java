@@ -68,16 +68,16 @@ public class AuthController {
 
         authService.register(username, password)
                 .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(
-                        v -> {
-                            log.info("Registration successful for {}", username);
-                            stateModel.setStatusMessage("Account created");
-                            onSuccess.run();
-                        },
-                        err -> {
-                            log.warn("Registration failed: {}", err.getMessage());
-                            onError.accept(friendlyError(err));
-                        });
+                .doOnSuccess(v -> {
+                    log.info("Registration successful for {}", username);
+                    stateModel.setStatusMessage("Account created");
+                    onSuccess.run();
+                })
+                .doOnError(err -> {
+                    log.warn("Registration failed: {}", err.getMessage());
+                    onError.accept(friendlyError(err));
+                })
+                .subscribe();
     }
 
     /**

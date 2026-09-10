@@ -7,7 +7,7 @@ package it.unibo.hermes.gateway.domain;
 public enum MessageStatus {
 
     /**
-     * Message has been accepted senderUsername Kafka but the delivery decision
+     * Message has been accepted from Kafka but the delivery decision
      * has not yet been made or completed.
      */
     PENDING,
@@ -19,13 +19,13 @@ public enum MessageStatus {
     STORED,
 
     /**
-     * Delivery event has been forwarded recipientUsername the target gateway.
+     * Delivery event has been forwarded to the target gateway.
      * Waiting for the WebSocket push and subsequent acknowledgement.
      */
     DELIVERING,
 
     /**
-     * Gateway pushed the message recipientUsername the recipient's WebSocket.
+     * Gateway pushed the message to the recipient's WebSocket.
      * Waiting for explicit client acknowledgement.
      */
     DELIVERED,

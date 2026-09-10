@@ -1,5 +1,7 @@
 package it.unibo.hermes.worker.event;
 
+import java.time.Instant;
+
 /**
  * Represents an event published by the Delivery Worker when an intended recipient is online
  * and requires real-time message delivery over WebSocket.
@@ -24,6 +26,6 @@ public record MessageDeliveryEvent(
         String recipientUsername,
         String gatewayId,
         String content,
-        long logicalTimestamp,
-        long physicalTimestamp) {
+        Long logicalTimestamp,
+        Instant physicalTimestamp) {
 }

@@ -14,14 +14,14 @@ import java.time.Instant;
 public class WsMessage {
 
     private WsMessageType type;
-
+    private String messageId;
+    private String conversationId;
+    private String senderUsername;
     private String recipientUsername;
     private String content;
-    private String clientMessageId; // client-assigned idempotency key
-    private String messageId; // server-assigned UUID
-    private String senderUsername;
     private Long logicalTimestamp;
     private Instant physicalTimestamp;
+    private String messageStatus;
     private String errorCode;
     private String reason;
 
@@ -75,6 +75,14 @@ public class WsMessage {
         this.type = t;
     }
 
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
     public String getRecipientUsername() {
         return recipientUsername;
     }
@@ -89,14 +97,6 @@ public class WsMessage {
 
     public void setContent(String c) {
         this.content = c;
-    }
-
-    public String getClientMessageId() {
-        return clientMessageId;
-    }
-
-    public void setClientMessageId(String c) {
-        this.clientMessageId = c;
     }
 
     public String getMessageId() {
@@ -129,6 +129,14 @@ public class WsMessage {
 
     public void setPhysicalTimestamp(Instant t) {
         this.physicalTimestamp = t;
+    }
+
+    public String getMessageStatus() {
+        return this.messageStatus;
+    }
+
+    public void setMessageStatus(String status) {
+        this.messageStatus = status;
     }
 
     public String getErrorCode() {

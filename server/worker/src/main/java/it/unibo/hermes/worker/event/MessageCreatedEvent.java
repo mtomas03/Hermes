@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.event;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import java.time.Instant;
 
 /**
  * Represents an event sent by the Gateway when a user sends a new message.
@@ -13,7 +14,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * @param recipientUsername the username of the target recipient
  * @param content           the plaintext body of the message
  * @param logicalTimestamp  the Lamport logical timestamp used for causal event ordering
- * @param physicalTimestamp the system creation timestamp in epoch milliseconds
+ * @param physicalTimestamp the timestamp in milliseconds
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MessageCreatedEvent(
@@ -22,6 +23,6 @@ public record MessageCreatedEvent(
         String senderUsername,
         String recipientUsername,
         String content,
-        long logicalTimestamp,
-        long physicalTimestamp) {
+        Long logicalTimestamp,
+        Instant physicalTimestamp) {
 }
