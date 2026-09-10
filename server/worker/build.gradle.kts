@@ -1,28 +1,21 @@
 plugins {
-    java
-    id("org.springframework.boot") version "3.2.5"
-    id("io.spring.dependency-management") version "1.1.4"
-    id("com.gradleup.shadow") version "9.3.0"
+    id("org.springframework.boot")
+    id("io.spring.dependency-management")
+    id("com.gradleup.shadow")
 }
 
 group = "it.unibo.hermes.worker"
-version = "1.0.0"
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
-repositories {
-    mavenCentral()
+springBoot {
+    mainClass.set("it.unibo.hermes.worker.HermesWorkerApp")
 }
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter")
-
     implementation("org.springframework.boot:spring-boot-starter-json")
-
     implementation("org.springframework.kafka:spring-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-data-cassandra")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

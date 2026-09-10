@@ -1,24 +1,13 @@
 plugins {
-    java
-    id("org.springframework.boot") version "3.2.5"
-    id("io.spring.dependency-management") version "1.1.4"
-    id("com.gradleup.shadow") version "9.3.0"
+    id("org.springframework.boot")
+    id("io.spring.dependency-management")
+    id("com.gradleup.shadow")
 }
 
 group = "it.unibo.hermes.gateway"
-version = "1.0.0"
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
 
 springBoot {
     mainClass.set("it.unibo.hermes.gateway.HermesGatewayApp")
-}
-
-repositories {
-    mavenCentral()
 }
 
 dependencies {
@@ -37,4 +26,6 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:0.12.5")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.5")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
