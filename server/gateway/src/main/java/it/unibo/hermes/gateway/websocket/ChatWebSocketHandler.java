@@ -167,7 +167,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             WsMessage ack = new WsMessage();
             ack.setType(WsMessageType.MESSAGE_ACCEPTED);
             ack.setMessageId(accepted.getMessageId().toString());
-            ack.setClientMessageId(msg.getClientMessageId());
             ack.setLogicalTimestamp(accepted.getLogicalTimestamp());
             send(session, ack);
 

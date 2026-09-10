@@ -1,35 +1,26 @@
 package it.unibo.hermes.gateway.domain;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * Represents an authenticated user persisted in PostgreSQL.
  */
 @Entity
-@Table(name = "users",
-        uniqueConstraints = @UniqueConstraint(columnNames = "username"))
+@Table(name = "users")
 public class User {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(nullable = false, unique = true, length = 64)
+    @Column(length = 64)
     private String username;
 
-    /**
-     * The BCrypt-hashed representation of the user's password.
-     */
-    @Column(nullable = false)
+    @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
-
-    /**
-     * The physical timestamp recording when this user account was created.
-     */
-    @Column(nullable = false, updatable = false)
-    private Instant createdAt = Instant.now();
 
     protected User() {
     }
@@ -43,11 +34,6 @@ public class User {
     public User(String username, String passwordHash) {
         this.username = username;
         this.passwordHash = passwordHash;
-        this.createdAt = Instant.now();
-    }
-
-    public Long getId() {
-        return id;
     }
 
     public String getUsername() {
@@ -58,7 +44,16 @@ public class User {
         return passwordHash;
     }
 
-    public Instant getCreatedAt() {
-        return createdAt;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        User user = (User) o;
+        return Objects.equals(username, user.username);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(username);
     }
 }

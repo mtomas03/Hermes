@@ -52,6 +52,7 @@ public class SyncService {
         List<MessageDto> dtos = messages.stream()
                 .map(m -> new MessageDto(
                         m.getMessageId().toString(),
+                        m.getConversationId(),
                         m.getSenderUsername(),
                         m.getRecipientUsername(),
                         m.getContent(),
@@ -75,7 +76,7 @@ public class SyncService {
      * @throws AccessDeniedException if the user is not one of the conversation participants
      */
     private void validateParticipant(String username, String conversationId) {
-        String[] parts = conversationId.split("\\|", 2);
+        String[] parts = conversationId.split("-", 2);
         if (parts.length != 2 || (!parts[0].equals(username) && !parts[1].equals(username))) {
             throw new AccessDeniedException(
                     "User '" + username + "' is not a participant of conversation '" + conversationId + "'");

@@ -13,7 +13,7 @@ public class MessageEvent {
     private String senderUsername;
     private String recipientUsername;
     private String content;
-    private long logicalTimestamp;
+    private Long logicalTimestamp;
     private Instant physicalTimestamp;
 
     public MessageEvent() {
@@ -28,20 +28,22 @@ public class MessageEvent {
      * @param recipientUsername the username of the recipient
      * @param content           the message content (text body)
      * @param logicalTimestamp  the Lamport timestamp establishing causal ordering
+     * @param physicalTimestamp the timestamp in milliseconds
      */
     public MessageEvent(UUID messageId,
                         String conversationId,
                         String senderUsername,
                         String recipientUsername,
                         String content,
-                        long logicalTimestamp) {
+                        Long logicalTimestamp,
+                        Instant physicalTimestamp) {
         this.messageId = messageId;
         this.conversationId = conversationId;
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
         this.logicalTimestamp = logicalTimestamp;
-        this.physicalTimestamp = Instant.now();
+        this.physicalTimestamp = physicalTimestamp;
     }
 
     public UUID getMessageId() {
@@ -84,11 +86,11 @@ public class MessageEvent {
         this.content = c;
     }
 
-    public long getLogicalTimestamp() {
+    public Long getLogicalTimestamp() {
         return logicalTimestamp;
     }
 
-    public void setLogicalTimestamp(long logicalTimestamp) {
+    public void setLogicalTimestamp(Long logicalTimestamp) {
         this.logicalTimestamp = logicalTimestamp;
     }
 

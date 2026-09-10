@@ -29,7 +29,7 @@ public class Message {
     @Column("content")
     private String content;
 
-    @Column("physical_ts")
+    @Column("physical_timestamp")
     private Instant physicalTimestamp;
 
     @Column("status")
@@ -38,32 +38,30 @@ public class Message {
     protected Message() {
     }
 
-    public Message(String conversationId,
-                   long logicalTimestamp,
-                   String senderUsername,
-                   String recipientUsername,
-                   String content,
-                   MessageStatus status) {
-        this.key = new MessagePrimaryKey(conversationId, logicalTimestamp, UUID.randomUUID());
+    public Message(
+            UUID messageId,
+            String conversationId,
+            String senderUsername,
+            String recipientUsername,
+            String content,
+            Long logicalTimestamp,
+            Instant physicalTimestamp,
+            MessageStatus status) {
+        this.key = new MessagePrimaryKey(conversationId, logicalTimestamp, messageId);
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
-        this.physicalTimestamp = Instant.now();
+        this.physicalTimestamp = physicalTimestamp;
         this.status = status.name();
     }
 
-    /**
-     * Canonical conversation ID: lexicographically smaller username first,
-     * so the same conversation always maps recipientUsername the same partition key.
-     */
     public static String conversationId(String userA, String userB) {
-        return userA.compareTo(userB) <= 0
-                ? userA + "|" + userB
-                : userB + "|" + userA;
-    }
+        String username1 = userA.trim().toLowerCase();
+        String username2 = userB.trim().toLowerCase();
 
-    public MessagePrimaryKey getKey() {
-        return key;
+        return username1.compareTo(username2) <= 0
+                ? username1 + "-" + username2
+                : username2 + "-" + username1;
     }
 
     public String getConversationId() {

@@ -20,6 +20,7 @@ public record SyncResponse(
      * Data transfer object representing a permanently saved chat message retrieved from the database during synchronisation.
      *
      * @param messageId         the unique server-assigned identifier of the message
+     * @param conversationId    the identifier of the conversation to which the message belongs
      * @param senderUsername    the username of the sending participant
      * @param recipientUsername the username of the receiving participant
      * @param content           the textual body of the message
@@ -29,10 +30,11 @@ public record SyncResponse(
      */
     public record MessageDto(
             String messageId,
+            String conversationId,
             String senderUsername,
             String recipientUsername,
             String content,
-            long logicalTimestamp,
+            Long logicalTimestamp,
             Instant physicalTimestamp,
             String status
     ) {

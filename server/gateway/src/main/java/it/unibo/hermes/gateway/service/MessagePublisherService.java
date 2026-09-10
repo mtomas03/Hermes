@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -50,25 +51,27 @@ public class MessagePublisherService {
     /**
      * Processes and routes an incoming WebSocket message event through Kafka or direct Cassandra fallback.
      *
-     * @param inbound  the validated message frame received from the client
-     * @param senderId the authenticated username of the sending client
+     * @param inbound  the validated message received from the client
+     * @param senderUsername the authenticated username of the sender
      * @return the accepted message event used to construct the acknowledgement response
      * @throws PersistenceUnavailableException if both Kafka and Cassandra are unreachable
      */
-    public MessageEvent publish(WsMessage inbound, String senderId) {
+    public MessageEvent publish(WsMessage inbound, String senderUsername) {
         String recipientUsername = inbound.getRecipientUsername();
-        String conversationId = Message.conversationId(senderId, recipientUsername);
+        String conversationId = Message.conversationId(senderUsername, recipientUsername);
         Long logicalTimestamp = inbound.getLogicalTimestamp();
         String messageContent = inbound.getContent();
-        UUID messageId = UUID.randomUUID();
+        Instant physicalTimestamp = inbound.getPhysicalTimestamp();
+        UUID messageId = UUID.fromString(inbound.getMessageId());
 
         MessageEvent event = new MessageEvent(
                 messageId,
                 conversationId,
-                senderId,
+                senderUsername,
                 recipientUsername,
                 messageContent,
-                logicalTimestamp
+                logicalTimestamp,
+                physicalTimestamp
         );
 
         if (tryPublishToKafka(event)) {
@@ -79,11 +82,13 @@ public class MessagePublisherService {
         log.warn("Kafka unavailable - falling back to Cassandra for message {}", messageId);
         try {
             cassandraAdapter.save(new Message(
+                    messageId,
                     conversationId,
-                    logicalTimestamp,
-                    senderId,
+                    senderUsername,
                     recipientUsername,
                     messageContent,
+                    logicalTimestamp,
+                    physicalTimestamp,
                     MessageStatus.STORED
             ));
             log.info("Message {} written to Cassandra via fallback path", messageId);
