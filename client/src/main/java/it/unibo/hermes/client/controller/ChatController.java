@@ -139,8 +139,11 @@ public class ChatController {
     }
 
     private String buildConvId(String username1, String username2) {
-        return username1.compareTo(username2) < 0
-                ? username1 + "-" + username2
-                : username2 + "-" + username1;
+        String u1 = username1.trim().toLowerCase();
+        String u2 = username2.trim().toLowerCase();
+
+        return u1.compareTo(u2) <= 0
+                ? u1 + "-" + u2
+                : u2 + "-" + u1;
     }
 }

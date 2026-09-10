@@ -59,7 +59,7 @@ class SyncServiceTest {
     @Test
     void applySyncWithNoMessagesShouldNotTouchPersistenceMessages() {
         SyncService service = new SyncService(WebClient.create(), props, persistence);
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(), null);
+        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
         service.applySync(response);
 
@@ -71,7 +71,7 @@ class SyncServiceTest {
         SyncService service = new SyncService(WebClient.create(), props, persistence);
         InboundMessageDto inbound = new InboundMessageDto(
                 "m1", "alice-bob", "bob", "alice", "hi", 5L, Instant.now(), "SENT");
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(inbound), null);
+        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(inbound));
 
         service.applySync(response);
 
@@ -81,21 +81,9 @@ class SyncServiceTest {
     }
 
     @Test
-    void applySyncShouldAdvanceCursorWhenProvided() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence);
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(), "m-latest");
-
-        service.applySync(response);
-
-        ArgumentCaptor<SyncCursor> captor = ArgumentCaptor.forClass(SyncCursor.class);
-        verify(persistence).saveCursor(captor.capture());
-        assertEquals("m-latest", captor.getValue().getLastSyncedMessageId());
-    }
-
-    @Test
     void applySyncShouldNotAdvanceCursorWhenAbsent() {
         SyncService service = new SyncService(WebClient.create(), props, persistence);
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(), null);
+        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
         service.applySync(response);
 
@@ -115,7 +103,7 @@ class SyncServiceTest {
 
     @Test
     void syncConversationShouldReturnServerResponse() throws Exception {
-        SyncResponseDto dto = new SyncResponseDto("alice-bob", List.of(), "m1");
+        SyncResponseDto dto = new SyncResponseDto("alice-bob", List.of());
         WebClient client = stubClient(mapper.writeValueAsString(dto));
         SyncService service = new SyncService(client, props, persistence);
 

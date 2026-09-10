@@ -61,7 +61,7 @@ class SyncControllerTest {
         when(persistence.loadAllConversations()).thenReturn(
                 List.of(new Conversation("alice-bob", new User("bob"), Instant.now())));
         when(persistence.loadCursor("alice-bob")).thenReturn(Optional.empty());
-        SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of(), null);
+        SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
         when(syncService.syncConversation(eq("alice-bob"), any(), anyString()))
                 .thenReturn(Mono.just(syncResponse));
 
