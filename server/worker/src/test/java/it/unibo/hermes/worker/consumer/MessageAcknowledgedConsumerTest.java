@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.worker.event.MessageAcknowledgedEvent;
 import it.unibo.hermes.worker.service.AcknowledgementService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -21,7 +22,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @ExtendWith(MockitoExtension.class)
 class MessageAcknowledgedConsumerTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule());
     @Mock
     private AcknowledgementService acknowledgementService;
     private MessageAcknowledgedConsumer consumer;

@@ -49,7 +49,7 @@ class PersistenceServiceTest {
                 UUID.randomUUID().toString(),
                 "alice-bob",
                 "alice", "bob", "hi",
-                1L, System.currentTimeMillis());
+                1L, Instant.now());
     }
 
     @Test

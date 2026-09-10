@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.worker.event.MessageCreatedEvent;
 import it.unibo.hermes.worker.service.DeliveryService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -11,6 +12,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,7 +23,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @ExtendWith(MockitoExtension.class)
 class MessageCreatedConsumerTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule());
     @Mock
     private DeliveryService deliveryService;
     private MessageCreatedConsumer consumer;
@@ -39,7 +42,8 @@ class MessageCreatedConsumerTest {
     void shouldDeserializeAndForwardValidEventToDeliveryService() throws Exception {
         MessageCreatedEvent event = new MessageCreatedEvent(
                 UUID.randomUUID().toString(), "alice-bob",
-                "alice", "bob", "hi", 1L, System.currentTimeMillis());
+                "alice", "bob",
+                "hi", 1L, Instant.now());
         String json = objectMapper.writeValueAsString(event);
 
         consumer.consume(record(json));

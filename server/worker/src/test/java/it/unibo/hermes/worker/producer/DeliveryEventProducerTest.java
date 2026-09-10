@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.producer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.worker.event.MessageCreatedEvent;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -22,7 +24,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventProducerTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule());
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
     private DeliveryEventProducer producer;
@@ -38,7 +41,7 @@ class DeliveryEventProducerTest {
                 UUID.randomUUID().toString(),
                 "alice-bob",
                 "alice", "bob", "hi",
-                1L, System.currentTimeMillis());
+                1L, Instant.now());
     }
 
     @SuppressWarnings("unchecked")

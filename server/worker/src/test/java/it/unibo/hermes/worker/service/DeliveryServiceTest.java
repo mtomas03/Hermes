@@ -10,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,7 +39,7 @@ class DeliveryServiceTest {
                 UUID.randomUUID().toString(),
                 "alice-bob",
                 "alice", "bob", "hi",
-                1L, System.currentTimeMillis());
+                1L, Instant.now());
     }
 
     @Test

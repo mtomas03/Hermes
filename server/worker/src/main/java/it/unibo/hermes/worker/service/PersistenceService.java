@@ -80,7 +80,7 @@ public class PersistenceService {
     public void persistMessage(MessageCreatedEvent event) {
         UUID messageId = UUID.fromString(event.messageId());
         String conversationId = event.conversationId();
-        Instant physical = Instant.ofEpochMilli(event.physicalTimestamp());
+        Instant physicalTimestamp = event.physicalTimestamp();
 
         try {
             Optional<MessageByIdEntity> existing = messageByIdRepository.findById(messageId);
@@ -98,13 +98,13 @@ public class PersistenceService {
                     event.recipientUsername(),
                     event.content(),
                     event.logicalTimestamp(),
-                    physical,
+                    physicalTimestamp,
                     DeliveryStatus.PENDING.name()
             );
             messageByIdRepository.save(byId);
 
             // 2. Insert into messages table (conversation-ordered)
-            ConversationMessageEntity byConversation = getByConversation(event, messageId, physical);
+            ConversationMessageEntity byConversation = getByConversation(event, messageId, physicalTimestamp);
             conversationMessageRepository.save(byConversation);
 
             log.debug("Message {} persisted as PENDING", messageId);
