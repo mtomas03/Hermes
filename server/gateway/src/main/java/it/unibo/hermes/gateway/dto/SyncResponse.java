@@ -25,7 +25,6 @@ public record SyncResponse(
      * @param recipientUsername the username of the receiving participant
      * @param content           the textual body of the message
      * @param logicalTimestamp  the Lamport clock value preserving causal message order
-     * @param physicalTimestamp the physical timestamp recording when the message was created
      * @param status            the current lifecycle status of the message
      */
     public record MessageDto(
@@ -35,7 +34,6 @@ public record SyncResponse(
             String recipientUsername,
             String content,
             Long logicalTimestamp,
-            Instant physicalTimestamp,
             String status
     ) {
     }

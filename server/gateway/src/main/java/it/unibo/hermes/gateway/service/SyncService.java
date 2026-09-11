@@ -57,7 +57,6 @@ public class SyncService {
                         m.getRecipientUsername(),
                         m.getContent(),
                         m.getLogicalTimestamp(),
-                        m.getPhysicalTimestamp(),
                         m.getStatus().name()
                 ))
                 .toList();

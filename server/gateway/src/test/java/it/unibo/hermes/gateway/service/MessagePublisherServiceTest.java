@@ -47,7 +47,6 @@ class MessagePublisherServiceTest {
         msg.setRecipientUsername("bob");
         msg.setConversationId("alice-bob");
         msg.setContent("hello");
-        msg.setPhysicalTimestamp(Instant.now());
         msg.setLogicalTimestamp(1L);
         msg.setMessageId(UUID.randomUUID().toString());
         return msg;

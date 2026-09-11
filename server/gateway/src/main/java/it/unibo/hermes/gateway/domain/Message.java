@@ -29,9 +29,6 @@ public class Message {
     @Column("content")
     private String content;
 
-    @Column("physical_timestamp")
-    private Instant physicalTimestamp;
-
     @Column("status")
     private String status;
 
@@ -45,13 +42,11 @@ public class Message {
             String recipientUsername,
             String content,
             Long logicalTimestamp,
-            Instant physicalTimestamp,
             MessageStatus status) {
         this.key = new MessagePrimaryKey(conversationId, logicalTimestamp, messageId);
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
-        this.physicalTimestamp = physicalTimestamp;
         this.status = status.name();
     }
 
@@ -86,10 +81,6 @@ public class Message {
 
     public String getContent() {
         return content;
-    }
-
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
     }
 
     public MessageStatus getStatus() {

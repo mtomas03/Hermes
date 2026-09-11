@@ -61,7 +61,6 @@ public class MessagePublisherService {
         String conversationId = Message.conversationId(senderUsername, recipientUsername);
         Long logicalTimestamp = inbound.getLogicalTimestamp();
         String messageContent = inbound.getContent();
-        Instant physicalTimestamp = inbound.getPhysicalTimestamp();
         UUID messageId = UUID.fromString(inbound.getMessageId());
 
         MessageEvent event = new MessageEvent(
@@ -70,8 +69,7 @@ public class MessagePublisherService {
                 senderUsername,
                 recipientUsername,
                 messageContent,
-                logicalTimestamp,
-                physicalTimestamp
+                logicalTimestamp
         );
 
         if (tryPublishToKafka(event)) {
@@ -88,7 +86,6 @@ public class MessagePublisherService {
                     recipientUsername,
                     messageContent,
                     logicalTimestamp,
-                    physicalTimestamp,
                     MessageStatus.STORED
             ));
             log.info("Message {} written to Cassandra via fallback path", messageId);

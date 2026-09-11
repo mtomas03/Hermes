@@ -87,7 +87,7 @@ class ChatWebSocketHandlerTest {
         UUID messageId = UUID.randomUUID();
         MessageEvent accepted = new MessageEvent(
                 messageId, "alice-bob", "alice", "bob",
-                "hi", 1L, Instant.now());
+                "hi", 1L);
         when(publisherService.publish(any(), eq("alice"))).thenReturn(accepted);
         String json = "{\"type\":\"SEND_MESSAGE\",\"recipientUsername\":\"bob\",\"content\":\"hi\"}";
 

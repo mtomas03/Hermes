@@ -46,7 +46,7 @@ class SyncServiceTest {
     void shouldFetchFullHistoryWhenCursorIsNegative() {
         Message msg = new Message(
                 UUID.randomUUID(), "alice-bob", "alice", "bob",
-                "hi", 1L, Instant.now(), MessageStatus.DELIVERED);
+                "hi", 1L, MessageStatus.DELIVERED);
         when(cassandraAdapter.findAll("alice-bob"))
                 .thenReturn(List.of(msg));
 
@@ -76,7 +76,7 @@ class SyncServiceTest {
         Message msg = new Message(
                 UUID.randomUUID(),
                 "alice-bob", "alice", "bob",
-                "yo", 2L, Instant.now(), MessageStatus.STORED);
+                "yo", 2L, MessageStatus.STORED);
         when(cassandraAdapter.findAfter("alice-bob", 0L)).thenReturn(List.of(msg));
 
         SyncResponse response = syncService.syncMissing("alice", "alice-bob", 0L);

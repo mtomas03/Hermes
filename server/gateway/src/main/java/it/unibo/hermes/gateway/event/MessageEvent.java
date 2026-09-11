@@ -1,6 +1,5 @@
 package it.unibo.hermes.gateway.event;
 
-import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -14,10 +13,6 @@ public class MessageEvent {
     private String recipientUsername;
     private String content;
     private Long logicalTimestamp;
-    private Instant physicalTimestamp;
-
-    public MessageEvent() {
-    }
 
     /**
      * Creates a new message event.
@@ -28,22 +23,19 @@ public class MessageEvent {
      * @param recipientUsername the username of the recipient
      * @param content           the message content (text body)
      * @param logicalTimestamp  the Lamport timestamp establishing causal ordering
-     * @param physicalTimestamp the timestamp in milliseconds
      */
     public MessageEvent(UUID messageId,
                         String conversationId,
                         String senderUsername,
                         String recipientUsername,
                         String content,
-                        Long logicalTimestamp,
-                        Instant physicalTimestamp) {
+                        Long logicalTimestamp) {
         this.messageId = messageId;
         this.conversationId = conversationId;
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
         this.logicalTimestamp = logicalTimestamp;
-        this.physicalTimestamp = physicalTimestamp;
     }
 
     public UUID getMessageId() {
@@ -92,13 +84,5 @@ public class MessageEvent {
 
     public void setLogicalTimestamp(Long logicalTimestamp) {
         this.logicalTimestamp = logicalTimestamp;
-    }
-
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
-    }
-
-    public void setPhysicalTimestamp(Instant physicalTimestamp) {
-        this.physicalTimestamp = physicalTimestamp;
     }
 }
