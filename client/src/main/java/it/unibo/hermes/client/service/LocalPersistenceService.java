@@ -33,16 +33,10 @@ public class LocalPersistenceService {
 
     public void saveMessage(Message msg) {
         messageRepo.insertIfAbsent(msg);
-        // Also bump the conversation's last activity
-        conversationRepo.updateLastActivity(msg.getConversationId(), msg.getPhysicalTimestamp());
     }
 
     public List<Message> loadMessages(String conversationId) {
         return messageRepo.findByConversation(conversationId);
-    }
-
-    public Optional<Message> findLastMessage(String conversationId) {
-        return messageRepo.findLastMessage(conversationId);
     }
 
     public void updateMessageStatus(String messageId, MessageStatus status) {
@@ -58,7 +52,7 @@ public class LocalPersistenceService {
     }
 
     public Optional<Conversation> findConversation(String conversationId) {
-        return conversationRepo.findById(conversationId);
+        return conversationRepo.findByConversationId(conversationId);
     }
 
     public void saveCursor(SyncCursor cursor) {
@@ -79,5 +73,9 @@ public class LocalPersistenceService {
 
     public void clearLocalUser() {
         userRepo.clear();
+    }
+
+    public long getLastLogicalTimestamp(String conversationId) {
+        return messageRepo.getLastLogicalTimestamp(conversationId);
     }
 }

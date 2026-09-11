@@ -11,10 +11,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,7 +37,6 @@ class MessageServiceTest {
 
         messageService.send("alice", "alice-bob", "bob", "hello");
 
-        // Saved locally before/alongside the WS send, in PENDING at insert time
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(persistence).saveMessage(captor.capture());
         Message saved = captor.getValue();
@@ -46,6 +44,7 @@ class MessageServiceTest {
         assertEquals("alice", saved.getSenderUsername());
         assertEquals("bob", saved.getRecipientUsername());
         assertEquals("hello", saved.getContent());
+        assertEquals(1L, saved.getLogicalTimestamp());
     }
 
     @Test
@@ -69,7 +68,7 @@ class MessageServiceTest {
     }
 
     @Test
-    void sendShouldSubmitOutboundDtoWithGivenContent() {
+    void sendShouldSubmitOutboundDtoWithGivenContentAndLogicalTimestamp() {
         when(wsService.sendMessage(any())).thenReturn(true);
 
         messageService.send("alice", "alice-bob", "bob", "hello");
@@ -81,18 +80,42 @@ class MessageServiceTest {
         assertEquals("alice", dto.myUsername());
         assertEquals("bob", dto.recipientUsername());
         assertEquals("hello", dto.content());
+        assertEquals(1L, dto.logicalTimestamp());
     }
 
     @Test
-    void receivingAnInboundMessageShouldPersistItAsSent() {
-        InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi there", 3L, Instant.now(), "SENT");
+    void sendingMultipleMessagesInSameConversationShouldIncrementLamportClock() {
+        when(wsService.sendMessage(any())).thenReturn(true);
 
+        Message msg1 = messageService.send("alice", "alice-bob", "bob", "first");
+        Message msg2 = messageService.send("alice", "alice-bob", "bob", "second");
+
+        assertEquals(1L, msg1.getLogicalTimestamp());
+        assertEquals(2L, msg2.getLogicalTimestamp());
+    }
+
+    @Test
+    void receivingAnInboundMessageShouldPersistItAndAdvanceLamportClock() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 5L, "SENT");
         Message result = messageService.receiveAndPersist(dto);
 
-        assertEquals("m1", result.getMessageId());
-        assertEquals(MessageStatus.SENT, result.getStatus());
         verify(persistence).saveMessage(result);
+        when(wsService.sendMessage(any())).thenReturn(true);
+        Message nextSent = messageService.send("alice", "alice-bob", "bob", "reply");
+        assertEquals(7L, nextSent.getLogicalTimestamp());
+    }
+
+    @Test
+    void clockShouldInitializeFromLocalPersistenceOnFirstUse() {
+        when(persistence.getLastLogicalTimestamp("alice-bob")).thenReturn(10L);
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        Message result = messageService.send("alice", "alice-bob", "bob", "hello");
+
+        assertEquals(11L, result.getLogicalTimestamp());
+        verify(persistence).getLastLogicalTimestamp("alice-bob");
     }
 
     @Test

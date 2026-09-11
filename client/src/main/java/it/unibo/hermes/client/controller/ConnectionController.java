@@ -91,7 +91,7 @@ public class ConnectionController {
         });
 
         stateModel.setConnectionState(ConnectionState.CONNECTING);
-        stateModel.setStatusMessage("Connecting…");
+        stateModel.setStatusMessage("Connecting...");
         wsService.connect(rawToken);
     }
 
@@ -110,7 +110,7 @@ public class ConnectionController {
 
         // Only update the active message list if this conv is currently open
         Conversation selected = stateModel.getSelectedConversation();
-        if (selected != null && selected.getConversationId().equals(dto.conversationId())) {
+        if (selected != null && selected.conversationId().equals(dto.conversationId())) {
             stateModel.appendMessage(msg);
         }
     }

@@ -76,7 +76,7 @@ public class SyncController {
         // 1. Persist / merge conversations into SQLite
         for (ConversationDto dto : dtos) {
             User user = new User(dto.participantUsername());
-            Conversation conv = new Conversation(dto.conversationId(), user, dto.lastMessageTimestamp());
+            Conversation conv = new Conversation(dto.conversationId(), user);
             persistence.saveConversation(conv);
         }
 
@@ -105,7 +105,7 @@ public class SyncController {
                             // If this conversation is currently open, refresh the message list
                             Conversation selected = stateModel.getSelectedConversation();
                             if (selected != null &&
-                                    selected.getConversationId().equals(response.conversationId())) {
+                                    selected.conversationId().equals(response.conversationId())) {
                                 refreshActiveMessages(response.conversationId());
                             }
                         },
