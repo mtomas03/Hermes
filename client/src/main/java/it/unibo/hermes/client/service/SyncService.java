@@ -5,7 +5,6 @@ import it.unibo.hermes.client.dto.ConversationDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
-import it.unibo.hermes.client.model.domain.SyncCursor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -29,11 +27,16 @@ public class SyncService {
     private final WebClient webClient;
     private final AppProperties props;
     private final LocalPersistenceService persistence;
+    private final MessageService messageService;
 
-    public SyncService(WebClient webClient, AppProperties props, LocalPersistenceService persistence) {
+    public SyncService(WebClient webClient,
+                       AppProperties props,
+                       LocalPersistenceService persistence,
+                       MessageService messageService) {
         this.webClient = webClient;
         this.props = props;
         this.persistence = persistence;
+        this.messageService = messageService;
     }
 
     /**
@@ -68,7 +71,7 @@ public class SyncService {
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(SyncResponseDto.class)
-                .doOnSuccess(r -> log.info("Sync conversation {} – {} new messages",
+                .doOnSuccess(r -> log.info("Sync conversation {} - {} new messages",
                         conversationId, r.messages().size()))
                 .doOnError(e -> log.warn("Sync error for {}: {}", conversationId, e.getMessage()));
     }
@@ -78,6 +81,8 @@ public class SyncService {
      * Safe to call multiple times (insertIfAbsent prevents duplication).
      */
     public void applySync(SyncResponseDto response) {
+        long maxSyncClock = 0L;
+
         for (var dto : response.messages()) {
             Message msg = new Message(
                     dto.messageId(),
@@ -86,18 +91,26 @@ public class SyncService {
                     dto.recipientUsername(),
                     dto.content(),
                     dto.logicalTimestamp(),
-                    dto.physicalTimestamp(),
                     MessageStatus.SENT);
+
             persistence.saveMessage(msg);
+
+            if (dto.logicalTimestamp() != null && dto.logicalTimestamp() > maxSyncClock) {
+                maxSyncClock = dto.logicalTimestamp();
+            }
         }
 
-        /* TODO: Uncomment when cursor persistence is implemented
+        if (maxSyncClock > 0) {
+            messageService.syncConversationClock(response.conversationId(), maxSyncClock);
+        }
+
+        /* TODO: Uncomment when cursor persistence is fixed
         if (response.cursorMessageId() != null) {
             SyncCursor cursor = new SyncCursor(
                     response.conversationId(),
                     response.cursorMessageId(),
                     Instant.now());
             persistence.saveCursor(cursor);
-        }*/
+        } */
     }
 }

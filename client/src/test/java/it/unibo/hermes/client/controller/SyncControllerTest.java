@@ -2,10 +2,7 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.dto.ConversationDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
-import it.unibo.hermes.client.model.domain.AuthToken;
-import it.unibo.hermes.client.model.domain.Conversation;
-import it.unibo.hermes.client.model.domain.Message;
-import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.service.LocalPersistenceService;
 import it.unibo.hermes.client.service.SyncService;
@@ -56,10 +53,10 @@ class SyncControllerTest {
     void syncAllShouldFetchConversationsWhenTokenIsPresent() {
         AuthToken expired = new AuthToken("t", Instant.now().minusSeconds(60));
         when(stateModel.getAuthToken()).thenReturn(expired);
-        ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob", "m0", Instant.now());
+        ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob");
         when(syncService.fetchConversations(anyString())).thenReturn(Mono.just(List.of(dto)));
         when(persistence.loadAllConversations()).thenReturn(
-                List.of(new Conversation("alice-bob", new User("bob"), Instant.now())));
+                List.of(new Conversation("alice-bob", new User("bob"))));
         when(persistence.loadCursor("alice-bob")).thenReturn(Optional.empty());
         SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
         when(syncService.syncConversation(eq("alice-bob"), any(), anyString()))
@@ -88,8 +85,9 @@ class SyncControllerTest {
 
     @Test
     void refreshActiveMessagesShouldReloadFromLocalPersistence() {
-        Message msg = new Message("m1", "alice-bob", "alice", "bob", "hi", 1L, Instant.now(),
-                it.unibo.hermes.client.model.domain.MessageStatus.SENT);
+        Message msg = new Message(
+                "m1", "alice-bob", "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(msg));
 
         controller.refreshActiveMessages("alice-bob");

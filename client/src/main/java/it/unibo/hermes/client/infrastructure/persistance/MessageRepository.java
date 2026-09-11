@@ -10,10 +10,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 @Repository
 public class MessageRepository {
@@ -27,14 +25,13 @@ public class MessageRepository {
     }
 
     /**
-     * Insert a message if it does not already exist (idempotent – enables
-     * safe replay during sync without duplication).
+     * Insert a message if it does not already exist.
      */
     public void insertIfAbsent(Message msg) {
         String sql = """
                 INSERT OR IGNORE INTO message
                     (message_id, conversation_id, sender_username, recipient_username,
-                     content, message_timestamp, status)
+                     content, logical_timestamp, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """;
         try (Connection conn = db.getDataSource().getConnection();
@@ -44,7 +41,7 @@ public class MessageRepository {
             ps.setString(3, msg.getSenderUsername());
             ps.setString(4, msg.getRecipientUsername());
             ps.setString(5, msg.getContent());
-            ps.setLong(6, msg.getPhysicalTimestamp().toEpochMilli());
+            ps.setLong(6, msg.getLogicalTimestamp());
             ps.setString(7, msg.getStatus().name());
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -68,7 +65,7 @@ public class MessageRepository {
         String sql = """
                 SELECT * FROM message
                 WHERE conversation_id = ?
-                ORDER BY message_timestamp ASC
+                ORDER BY logical_timestamp, message_id
                 """;
         List<Message> result = new ArrayList<>();
         try (Connection conn = db.getDataSource().getConnection();
@@ -83,42 +80,6 @@ public class MessageRepository {
         return result;
     }
 
-    public Optional<Message> findById(String messageId) {
-        String sql = "SELECT * FROM message WHERE message_id = ?";
-        try (Connection conn = db.getDataSource().getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, messageId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return Optional.of(mapRow(rs));
-            }
-        } catch (SQLException e) {
-            log.error("Failed to find message {}", messageId, e);
-        }
-        return Optional.empty();
-    }
-
-    /**
-     * Returns the message with the highest timestamp for the given conversation.
-     */
-    public Optional<Message> findLastMessage(String conversationId) {
-        String sql = """
-                SELECT * FROM message
-                WHERE conversation_id = ?
-                ORDER BY message_timestamp DESC
-                LIMIT 1
-                """;
-        try (Connection conn = db.getDataSource().getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, conversationId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return Optional.of(mapRow(rs));
-            }
-        } catch (SQLException e) {
-            log.error("Failed to find last message for {}", conversationId, e);
-        }
-        return Optional.empty();
-    }
-
     private Message mapRow(ResultSet rs) throws SQLException {
         return new Message(
                 rs.getString("message_id"),
@@ -127,7 +88,26 @@ public class MessageRepository {
                 rs.getString("recipient_username"),
                 rs.getString("content"),
                 rs.getLong("logical_timestamp"),
-                Instant.ofEpochMilli(rs.getLong("physical_timestamp")),
                 MessageStatus.valueOf(rs.getString("status")));
+    }
+
+    public long getLastLogicalTimestamp(String conversationId) {
+        String sql = """
+                SELECT MAX(logical_timestamp) AS last_logical
+                FROM message
+                WHERE conversation_id = ?
+                """;
+        try (Connection conn = db.getDataSource().getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, conversationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong("last_logical");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to find last logical timestamp for {}", conversationId, e);
+        }
+        return 0L;
     }
 }

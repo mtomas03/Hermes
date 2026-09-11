@@ -14,7 +14,6 @@ import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -81,7 +80,8 @@ class StompSessionHandlerTest {
         verify(session).subscribe(eq("/user/queue/messages"), captor.capture());
         StompFrameHandler messageFrameHandler = captor.getValue();
         InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), "SENT");
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 1L, "SENT");
 
         messageFrameHandler.handleFrame(headers, dto);
 

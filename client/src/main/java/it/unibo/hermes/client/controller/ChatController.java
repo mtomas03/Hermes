@@ -14,7 +14,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -51,9 +50,9 @@ public class ChatController {
      */
     public void selectConversation(Conversation conv) {
         stateModel.setSelectedConversation(conv);
-        List<Message> msgs = persistence.loadMessages(conv.getConversationId());
+        List<Message> msgs = persistence.loadMessages(conv.conversationId());
         stateModel.replaceMessages(msgs);
-        log.debug("Selected {} - {} local messages", conv.getConversationId(), msgs.size());
+        log.debug("Selected {} - {} local messages", conv.conversationId(), msgs.size());
     }
 
     /**
@@ -80,14 +79,13 @@ public class ChatController {
 
         Message msg = messageService.send(
                 self.username(),
-                conv.getConversationId(),
-                conv.getOtherUser().username(),
+                conv.conversationId(),
+                conv.recipientUsername().username(),
                 content.trim());
 
         // Optimistic append: view reacts via ObservableList listener
         stateModel.appendMessage(msg);
-        conv.setLastActivity(Instant.now());
-        log.debug("Sent message {} in {}", msg.getMessageId(), conv.getConversationId());
+        log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
     }
 
     /**
@@ -118,18 +116,18 @@ public class ChatController {
     }
 
     private void openOrCreate(UserDto dto, User self) {
-        String convId = buildConvId(self.username(), dto.username());
+        String conversationId = buildConversationId(self.username(), dto.username());
         User peer = new User(dto.username());
 
-        Conversation conv = persistence.findConversation(convId)
+        Conversation conv = persistence.findConversation(conversationId)
                 .orElseGet(() -> {
-                    Conversation c = new Conversation(convId, peer, Instant.now());
+                    Conversation c = new Conversation(conversationId, peer);
                     persistence.saveConversation(c);
                     return c;
                 });
 
         boolean exists = stateModel.getConversations().stream()
-                .anyMatch(c -> c.getConversationId().equals(convId));
+                .anyMatch(c -> c.conversationId().equals(conversationId));
         if (!exists) {
             // Prepend so newest appears at top
             stateModel.getConversations().addFirst(conv);
@@ -138,7 +136,7 @@ public class ChatController {
         selectConversation(conv);
     }
 
-    private String buildConvId(String username1, String username2) {
+    private String buildConversationId(String username1, String username2) {
         String u1 = username1.trim().toLowerCase();
         String u2 = username2.trim().toLowerCase();
 

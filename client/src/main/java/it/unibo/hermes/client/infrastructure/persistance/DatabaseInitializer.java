@@ -29,7 +29,7 @@ public class DatabaseInitializer {
             this.dataSource = ds;
             log.info("SQLite database configured at: {}", props.getDbPath());
         } else {
-            // Subclass will override getDataSource() – leave null here
+            // Subclass will override getDataSource() - leave null here
             this.dataSource = null;
         }
     }
@@ -49,15 +49,14 @@ public class DatabaseInitializer {
             conn.setAutoCommit(false);
 
             stmt.execute("""
-                    CREATE TABLE IF NOT EXISTS local_user (
+                    CREATE TABLE IF NOT EXISTS user (
                         username TEXT NOT NULL
                     )""");
 
             stmt.execute("""
                     CREATE TABLE IF NOT EXISTS conversation (
                         conversation_id       TEXT PRIMARY KEY,
-                        peer_username         TEXT NOT NULL,
-                        last_activity_epoch   INTEGER NOT NULL DEFAULT 0
+                        recipient_username    TEXT NOT NULL
                     )""");
 
             stmt.execute("""
@@ -67,14 +66,14 @@ public class DatabaseInitializer {
                         sender_username    TEXT NOT NULL,
                         recipient_username TEXT NOT NULL,
                         content            TEXT NOT NULL,
-                        message_timestamp  INTEGER NOT NULL DEFAULT 0,
+                        logical_timestamp  INTEGER NOT NULL DEFAULT 0,
                         status             TEXT NOT NULL DEFAULT 'PENDING',
                         FOREIGN KEY (conversation_id) REFERENCES conversation(conversation_id)
                     )""");
 
             stmt.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_message_conv
-                        ON message(conversation_id, message_timestamp)""");
+                    CREATE INDEX IF NOT EXISTS idx_message_conv_logical
+                        ON message(conversation_id, logical_timestamp)""");
 
             stmt.execute("""
                     CREATE TABLE IF NOT EXISTS sync_cursor (
@@ -84,7 +83,7 @@ public class DatabaseInitializer {
                     )""");
 
             conn.commit();
-            log.info("Database schema initialised/verified");
+            log.info("Database schema initialised");
 
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to initialise database schema", e);

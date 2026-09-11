@@ -23,7 +23,7 @@ public class LocalUserRepository {
     }
 
     public void save(User user) {
-        String sql = "INSERT OR REPLACE INTO local_user (username) VALUES (?)";
+        String sql = "INSERT OR REPLACE INTO user (username) VALUES (?)";
         try (Connection conn = db.getDataSource().getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, user.username());
@@ -36,7 +36,7 @@ public class LocalUserRepository {
     public Optional<User> findFirst() {
         try (Connection conn = db.getDataSource().getConnection();
              Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT * FROM local_user LIMIT 1")) {
+             ResultSet rs = stmt.executeQuery("SELECT * FROM user LIMIT 1")) {
             if (rs.next()) {
                 return Optional.of(new User(rs.getString("username")));
             }
@@ -49,7 +49,7 @@ public class LocalUserRepository {
     public void clear() {
         try (Connection conn = db.getDataSource().getConnection();
              Statement stmt = conn.createStatement()) {
-            stmt.execute("DELETE FROM local_user");
+            stmt.execute("DELETE FROM user");
         } catch (SQLException e) {
             log.error("Failed to clear local user", e);
         }

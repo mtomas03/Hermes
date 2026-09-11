@@ -7,7 +7,6 @@ import it.unibo.hermes.client.dto.ConversationDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.domain.Message;
-import it.unibo.hermes.client.model.domain.SyncCursor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,12 +21,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class SyncServiceTest {
@@ -36,6 +33,8 @@ class SyncServiceTest {
 
     @Mock
     private LocalPersistenceService persistence;
+    @Mock
+    private MessageService messageService;
 
     private AppProperties props;
 
@@ -58,43 +57,54 @@ class SyncServiceTest {
 
     @Test
     void applySyncWithNoMessagesShouldNotTouchPersistenceMessages() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence);
+        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
         service.applySync(response);
 
         verifyNoInteractions(persistence);
+        verifyNoInteractions(messageService);
     }
 
     @Test
-    void applySyncShouldPersistEachSyncedMessage() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence);
-        InboundMessageDto inbound = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi", 5L, Instant.now(), "SENT");
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(inbound));
+    void applySyncShouldPersistEachSyncedMessageAndSyncLamportClock() {
+        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
+        InboundMessageDto inbound1 = new InboundMessageDto(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 5L, "SENT");
+        InboundMessageDto inbound2 = new InboundMessageDto(
+                "m2", "alice-bob", "bob", "alice",
+                "how are you?", 8L, "SENT");
+        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(inbound1, inbound2));
 
         service.applySync(response);
 
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
-        verify(persistence).saveMessage(captor.capture());
-        assertEquals("m1", captor.getValue().getMessageId());
+        verify(persistence, times(2)).saveMessage(captor.capture());
+        assertEquals("m1", captor.getAllValues().get(0).getMessageId());
+        assertEquals("m2", captor.getAllValues().get(1).getMessageId());
+
+        verify(messageService).syncConversationClock("alice-bob", 8L);
     }
 
-    @Test
-    void applySyncShouldNotAdvanceCursorWhenAbsent() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence);
+    /*@Test
+    void applySyncShouldSaveCursorWhenCursorMessageIdIsPresent() {
+        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
         service.applySync(response);
 
-        verifyNoInteractions(persistence);
-    }
+        ArgumentCaptor<SyncCursor> captor = ArgumentCaptor.forClass(SyncCursor.class);
+        verify(persistence).saveCursor(captor.capture());
+        assertEquals("alice-bob", captor.getValue().getConversationId());
+        assertEquals("m2", captor.getValue().getLastSyncedMessageId());
+    }*/
 
     @Test
     void fetchConversationsShouldReturnListFromServer() throws Exception {
-        ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob", "m1", Instant.now());
+        ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob");
         WebClient client = stubClient(mapper.writeValueAsString(new ConversationDto[]{dto}));
-        SyncService service = new SyncService(client, props, persistence);
+        SyncService service = new SyncService(client, props, persistence, messageService);
 
         StepVerifier.create(service.fetchConversations("Bearer t"))
                 .assertNext(list -> assertEquals(1, list.size()))
@@ -105,7 +115,7 @@ class SyncServiceTest {
     void syncConversationShouldReturnServerResponse() throws Exception {
         SyncResponseDto dto = new SyncResponseDto("alice-bob", List.of());
         WebClient client = stubClient(mapper.writeValueAsString(dto));
-        SyncService service = new SyncService(client, props, persistence);
+        SyncService service = new SyncService(client, props, persistence, messageService);
 
         StepVerifier.create(service.syncConversation("alice-bob", null, "Bearer t"))
                 .assertNext(resp -> assertEquals("alice-bob", resp.conversationId()))

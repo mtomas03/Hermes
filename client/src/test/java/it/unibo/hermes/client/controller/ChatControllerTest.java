@@ -42,8 +42,10 @@ class ChatControllerTest {
 
     @Test
     void selectingAConversationShouldLoadItsLocalHistoryIntoState() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
-        Message msg = new Message("m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), MessageStatus.SENT);
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
+        Message msg = new Message(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(msg));
 
         controller.selectConversation(conv);
@@ -64,7 +66,7 @@ class ChatControllerTest {
 
     @Test
     void sendingMessageWithoutAuthenticatedUserShouldReportError() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getSelectedConversation()).thenReturn(conv);
         when(stateModel.getCurrentUser()).thenReturn(null);
 
@@ -76,7 +78,7 @@ class ChatControllerTest {
 
     @Test
     void sendingBlankMessageShouldBeSilentlyIgnored() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getSelectedConversation()).thenReturn(conv);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
 
@@ -88,8 +90,10 @@ class ChatControllerTest {
 
     @Test
     void sendingValidMessageShouldDelegateToMessageServiceAndAppendOptimistically() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
-        Message sent = new Message("m1", "alice-bob", "alice", "bob", "hello", 1L, Instant.now(), MessageStatus.SENT);
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
+        Message sent = new Message(
+                "m1", "alice-bob", "alice", "bob",
+                "hello", 1L, MessageStatus.SENT);
         when(stateModel.getSelectedConversation()).thenReturn(conv);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
         when(messageService.send("alice", "alice-bob", "bob", "hello")).thenReturn(sent);

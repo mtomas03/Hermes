@@ -41,18 +41,20 @@ class LocalPersistenceServiceTest {
 
     @Test
     void savingAMessageShouldInsertItAndBumpConversationActivity() {
-        Instant ts = Instant.now();
-        Message msg = new Message("m1", "alice-bob", "alice", "bob", "hi", 1L, ts, MessageStatus.SENT);
+        Message msg = new Message(
+                "m1", "alice-bob", "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
 
         service.saveMessage(msg);
 
         verify(messageRepo).insertIfAbsent(msg);
-        verify(conversationRepo).updateLastActivity("alice-bob", ts);
     }
 
     @Test
     void loadingMessagesShouldDelegateToMessageRepository() {
-        Message msg = new Message("m1", "alice-bob", "alice", "bob", "hi", 1L, Instant.now(), MessageStatus.SENT);
+        Message msg = new Message(
+                "m1", "alice-bob", "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
         when(messageRepo.findByConversation("alice-bob")).thenReturn(List.of(msg));
 
         List<Message> result = service.loadMessages("alice-bob");
@@ -71,17 +73,6 @@ class LocalPersistenceServiceTest {
     }
 
     @Test
-    void findingLastMessageShouldDelegateToMessageRepository() {
-        Message msg = new Message("m1", "alice-bob", "alice", "bob", "hi", 1L, Instant.now(), MessageStatus.SENT);
-        when(messageRepo.findLastMessage("alice-bob")).thenReturn(Optional.of(msg));
-
-        Optional<Message> result = service.findLastMessage("alice-bob");
-
-        assertTrue(result.isPresent());
-        assertEquals("m1", result.get().getMessageId());
-    }
-
-    @Test
     void updatingMessageStatusShouldDelegateToMessageRepository() {
         service.updateMessageStatus("m1", MessageStatus.SENT);
 
@@ -90,7 +81,7 @@ class LocalPersistenceServiceTest {
 
     @Test
     void savingConversationShouldDelegateToConversationRepository() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
 
         service.saveConversation(conv);
 
@@ -99,7 +90,7 @@ class LocalPersistenceServiceTest {
 
     @Test
     void loadingAllConversationsShouldDelegateToConversationRepository() {
-        Conversation conv = new Conversation("alice-bob", new User("bob"), Instant.now());
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
         when(conversationRepo.findAll()).thenReturn(List.of(conv));
 
         List<Conversation> result = service.loadAllConversations();
@@ -109,12 +100,12 @@ class LocalPersistenceServiceTest {
 
     @Test
     void findingConversationShouldDelegateToConversationRepository() {
-        when(conversationRepo.findById("alice-bob")).thenReturn(Optional.empty());
+        when(conversationRepo.findByConversationId("alice-bob")).thenReturn(Optional.empty());
 
         Optional<Conversation> result = service.findConversation("alice-bob");
 
         assertTrue(result.isEmpty());
-        verify(conversationRepo).findById("alice-bob");
+        verify(conversationRepo).findByConversationId("alice-bob");
     }
 
     @Test

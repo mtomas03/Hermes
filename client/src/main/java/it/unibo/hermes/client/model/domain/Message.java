@@ -1,6 +1,5 @@
 package it.unibo.hermes.client.model.domain;
 
-import java.time.Instant;
 import java.util.Objects;
 
 /**
@@ -12,8 +11,7 @@ public final class Message {
     private final String senderUsername;
     private final String recipientUsername;
     private final String content;
-    private final Instant physicalTimestamp;
-    private final long logicalTimestamp;
+    private final Long logicalTimestamp;
     private volatile MessageStatus status;
 
     public Message(String messageId,
@@ -22,7 +20,6 @@ public final class Message {
                    String recipientUsername,
                    String content,
                    Long logicalTimestamp,
-                   Instant physicalTimestamp,
                    MessageStatus status) {
         this.messageId = Objects.requireNonNull(messageId);
         this.conversationId = Objects.requireNonNull(conversationId);
@@ -30,7 +27,6 @@ public final class Message {
         this.recipientUsername = Objects.requireNonNull(recipientUsername);
         this.content = Objects.requireNonNull(content);
         this.logicalTimestamp = logicalTimestamp != null ? logicalTimestamp : 0L;
-        this.physicalTimestamp = physicalTimestamp != null ? physicalTimestamp : Instant.now();
         this.status = status != null ? status : MessageStatus.SENT;
     }
 
@@ -52,10 +48,6 @@ public final class Message {
 
     public String getContent() {
         return content;
-    }
-
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
     }
 
     public long getLogicalTimestamp() {

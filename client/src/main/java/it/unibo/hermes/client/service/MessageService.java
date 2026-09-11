@@ -8,8 +8,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Handles the lifecycle of a single message.
@@ -21,6 +23,7 @@ public class MessageService {
 
     private final WebSocketService wsService;
     private final LocalPersistenceService persistence;
+    private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
 
     public MessageService(WebSocketService wsService, LocalPersistenceService persistence) {
         this.wsService = wsService;
@@ -29,16 +32,13 @@ public class MessageService {
 
     /**
      * Sends a message to {@code recipientUsername} in {@code conversationId}.
-     *
-     * <p>The message is saved locally first (PENDING), then submitted via WebSocket.
-     * If the WebSocket is unavailable the message stays PENDING for retry.
-     *
-     * @return the optimistically-created Message
      */
     public Message send(String senderUsername,
                         String conversationId,
                         String recipientUsername,
                         String content) {
+        AtomicLong clock = getConversationClock(conversationId);
+        long currentClock = clock.incrementAndGet();
 
         String messageId = UUID.randomUUID().toString();
         Message local = new Message(
@@ -47,8 +47,7 @@ public class MessageService {
                 senderUsername,
                 recipientUsername,
                 content,
-                null,
-                Instant.now(),
+                currentClock,
                 MessageStatus.PENDING);
 
         persistence.saveMessage(local);
@@ -57,7 +56,8 @@ public class MessageService {
         OutboundMessageDto dto = new OutboundMessageDto(
                 messageId, conversationId, senderUsername,
                 recipientUsername, content,
-                null, Instant.now());
+                currentClock);
+
         boolean sent = wsService.sendMessage(dto);
         if (sent) {
             persistence.updateMessageStatus(messageId, MessageStatus.SENT);
@@ -74,6 +74,10 @@ public class MessageService {
      * and persists it (idempotent – safe during reconnect replays).
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
+        AtomicLong clock = getConversationClock(dto.conversationId());
+        long msgClock = dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L;
+        clock.updateAndGet(current -> Math.max(current, msgClock) + 1);
+
         Message msg = new Message(
                 dto.messageId(),
                 dto.conversationId(),
@@ -81,7 +85,6 @@ public class MessageService {
                 dto.recipientUsername(),
                 dto.content(),
                 dto.logicalTimestamp(),
-                dto.physicalTimestamp(),
                 MessageStatus.SENT);
 
         persistence.saveMessage(msg);
@@ -90,5 +93,17 @@ public class MessageService {
 
     public void acknowledgeDelivery(String messageId) {
         persistence.updateMessageStatus(messageId, MessageStatus.SENT);
+    }
+
+    public void syncConversationClock(String conversationId, long remoteMaxClock) {
+        getConversationClock(conversationId)
+                .updateAndGet(current -> Math.max(current, remoteMaxClock));
+    }
+
+    private AtomicLong getConversationClock(String conversationId) {
+        return lamportClocks.computeIfAbsent(conversationId, cid -> {
+            long lastKnownClock = persistence.getLastLogicalTimestamp(cid);
+            return new AtomicLong(lastKnownClock);
+        });
     }
 }

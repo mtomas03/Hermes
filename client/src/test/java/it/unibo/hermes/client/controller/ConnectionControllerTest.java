@@ -20,7 +20,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.time.Instant;
 import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -112,11 +111,14 @@ class ConnectionControllerTest {
 
     @Test
     void inboundMessageForTheOpenConversationShouldBeAppendedToActiveMessages() {
-        Conversation open = new Conversation("alice-bob", new User("bob"), Instant.now());
+        Conversation open = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getSelectedConversation()).thenReturn(open);
         InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), "SENT");
-        Message persisted = new Message("m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), MessageStatus.SENT);
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 1L, "SENT");
+        Message persisted = new Message(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
         when(msgService.receiveAndPersist(dto)).thenReturn(persisted);
 
         controller.connect("token123");
@@ -130,12 +132,14 @@ class ConnectionControllerTest {
 
     @Test
     void inboundMessageForADifferentConversationShouldNotBeAppended() {
-        Conversation openedElsewhere = new Conversation("conv-other", new User("carol"), Instant.now());
+        Conversation openedElsewhere = new Conversation("conv-other", new User("carol"));
         when(stateModel.getSelectedConversation()).thenReturn(openedElsewhere);
         InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), "SENT");
+                "m1", "alice-bob", "bob", "alice", "hi", 1L, "SENT");
         when(msgService.receiveAndPersist(dto)).thenReturn(
-                new Message("m1", "alice-bob", "bob", "alice", "hi", 1L, Instant.now(), MessageStatus.SENT));
+                new Message(
+                        "m1", "alice-bob", "bob", "alice",
+                        "hi", 1L, MessageStatus.SENT));
 
         controller.connect("token123");
         verify(wsService).setOnMessage(inboundMessageCaptor.capture());
