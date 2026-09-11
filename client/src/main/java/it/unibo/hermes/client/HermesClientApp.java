@@ -9,8 +9,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import javax.swing.*;
 
 /**
- * Client entry-point. Bootstraps Spring context,
- * then delegates UI management to NavigationController.
+ * Client entry-point.
  */
 public class HermesClientApp {
 
@@ -32,8 +31,7 @@ public class HermesClientApp {
 
             NavigationController nav = context.getBean(NavigationController.class);
             nav.initPrimaryFrame(frame);
-            //nav.showLogin();
-            nav.showChat();
+            nav.showLogin();
 
             frame.setVisible(true);
 
