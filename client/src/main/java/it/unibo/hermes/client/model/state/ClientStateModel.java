@@ -56,7 +56,7 @@ public class ClientStateModel {
 
     /**
      * Appends a message to the active list if it is not already present,
-     * then re-sorts by timestamp (thread-safe).
+     * then re-sorts by logical timestamp and message ID as tie-breaker.
      */
     public void appendMessage(Message msg) {
         runOnSwing(() -> {
@@ -64,7 +64,10 @@ public class ClientStateModel {
                     .anyMatch(m -> m.getMessageId().equals(msg.getMessageId()));
             if (!exists) {
                 activeMessages.add(msg);
-                activeMessages.sort(Comparator.comparing(Message::getPhysicalTimestamp));
+                activeMessages.sort(
+                        Comparator.comparingLong(Message::getLogicalTimestamp)
+                                .thenComparing(Message::getMessageId)
+                );
                 pcs.firePropertyChange(PROP_ACTIVE_MESSAGES, null, new ArrayList<>(activeMessages));
             }
         });

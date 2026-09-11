@@ -20,7 +20,6 @@ public class WsMessage {
     private String recipientUsername;
     private String content;
     private Long logicalTimestamp;
-    private Instant physicalTimestamp;
     private String messageStatus;
     private String errorCode;
     private String reason;
@@ -121,14 +120,6 @@ public class WsMessage {
 
     public void setLogicalTimestamp(Long t) {
         this.logicalTimestamp = t;
-    }
-
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
-    }
-
-    public void setPhysicalTimestamp(Instant t) {
-        this.physicalTimestamp = t;
     }
 
     public String getMessageStatus() {
