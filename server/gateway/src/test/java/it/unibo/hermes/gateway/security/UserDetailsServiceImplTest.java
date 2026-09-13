@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.security;
 
-import it.unibo.hermes.gateway.domain.User;
+import it.unibo.hermes.gateway.entity.User;
 import it.unibo.hermes.gateway.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

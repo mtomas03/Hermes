@@ -1,18 +1,20 @@
 package it.unibo.hermes.worker.consumer;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import it.unibo.hermes.worker.event.MessageCreatedEvent;
+import it.unibo.hermes.worker.event.MessageEvent;
 import it.unibo.hermes.worker.service.DeliveryService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,9 +26,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class MessageCreatedConsumerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule());
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+
     @Mock
     private DeliveryService deliveryService;
+
     private MessageCreatedConsumer consumer;
 
     @BeforeEach
@@ -34,31 +40,47 @@ class MessageCreatedConsumerTest {
         consumer = new MessageCreatedConsumer(deliveryService, objectMapper);
     }
 
-    private ConsumerRecord<String, String> record(String json) {
-        return new ConsumerRecord<>("message-created", 0, 0L, "key", json);
+    private ConsumerRecord<String, String> createRecord(String jsonPayload) {
+        return new ConsumerRecord<>("message-created", 0, 0L, "alice-bob", jsonPayload);
     }
 
     @Test
     void shouldDeserializeAndForwardValidEventToDeliveryService() throws Exception {
-        MessageCreatedEvent event = new MessageCreatedEvent(
-                UUID.randomUUID().toString(), "alice-bob",
-                "alice", "bob",
-                "hi", 1L, Instant.now());
-        String json = objectMapper.writeValueAsString(event);
+        String messageId = UUID.randomUUID().toString();
+        MessageEvent expectedEvent = new MessageEvent(
+                messageId,
+                "alice-bob",
+                "alice",
+                "bob",
+                "hi",
+                1L
+        );
+        String jsonPayload = objectMapper.writeValueAsString(expectedEvent);
 
-        consumer.consume(record(json));
+        consumer.consume(createRecord(jsonPayload));
 
-        ArgumentCaptor<MessageCreatedEvent> captor = ArgumentCaptor.forClass(MessageCreatedEvent.class);
+        ArgumentCaptor<MessageEvent> captor = ArgumentCaptor.forClass(MessageEvent.class);
         verify(deliveryService).processMessage(captor.capture());
-        assertThat(captor.getValue().messageId()).isEqualTo(event.messageId());
-        assertThat(captor.getValue().conversationId()).isEqualTo("alice-bob");
-        assertThat(captor.getValue().recipientUsername()).isEqualTo("bob");
+        MessageEvent actualEvent = captor.getValue();
+        assertThat(actualEvent.messageId()).isEqualTo(messageId);
+        assertThat(actualEvent.conversationId()).isEqualTo("alice-bob");
+        assertThat(actualEvent.senderUsername()).isEqualTo("alice");
+        assertThat(actualEvent.recipientUsername()).isEqualTo("bob");
+        assertThat(actualEvent.content()).isEqualTo("hi");
+        assertThat(actualEvent.logicalTimestamp()).isEqualTo(1L);
     }
 
     @Test
+    @DisplayName("Should throw IllegalArgumentException and skip processing when JSON is malformed")
     void shouldThrowAndNotProcessWhenPayloadIsMalformed() {
-        assertThatThrownBy(() -> consumer.consume(record("not-valid-json")))
-                .isInstanceOf(IllegalArgumentException.class);
+        // Given
+        ConsumerRecord<String, String> malformedRecord = createRecord("not-valid-json");
+
+        // When / Then
+        assertThatThrownBy(() -> consumer.consume(malformedRecord))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Cannot deserialize MessageEvent");
+
         verifyNoInteractions(deliveryService);
     }
 }

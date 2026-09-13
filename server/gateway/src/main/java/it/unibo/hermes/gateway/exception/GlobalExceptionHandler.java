@@ -76,7 +76,7 @@ public class GlobalExceptionHandler {
         log.error("Persistence unavailable: {}", ex.getMessage());
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
         pd.setTitle("Service temporarily unavailable");
-        pd.setDetail("Message could not be persisted. Please retry.");
+        pd.setDetail("MessageByConversation could not be persisted. Please retry.");
         return pd;
     }
 
@@ -86,8 +86,8 @@ public class GlobalExceptionHandler {
      * @param ex the root application exception
      * @return a problem detail response with status 500 Internal Server Error
      */
-    @ExceptionHandler(HermesException.class)
-    public ProblemDetail handleHermes(HermesException ex) {
+    @ExceptionHandler(RuntimeException.class)
+    public ProblemDetail handleHermes(RuntimeException ex) {
         log.error("Internal error: {}", ex.getMessage(), ex);
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
         pd.setTitle("Internal error");

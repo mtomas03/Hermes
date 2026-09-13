@@ -3,30 +3,25 @@ spring:
     name: hermes-worker
 
   cassandra:
-    contact-points: localhost:9042
     keyspace-name: hermes
-    local-datacenter: datacenter1
-    schema-action: none
+    contact-points: ${CASSANDRA_HOST:localhost}
+    port: ${CASSANDRA_PORT:9042}
+    local-datacenter: ${CASSANDRA_DC:datacenter1}
+    schema-action: none # schema managed via schema.cql
     request:
       timeout: 5s
       consistency: LOCAL_QUORUM
 
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 2000ms
       connect-timeout: 1000ms
 
   kafka:
-    bootstrap-servers: localhost:9092
-    consumer:
-      group-id: hermes-worker
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      enable-auto-commit: false
-      max-poll-records: 50
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -34,15 +29,26 @@ spring:
       retries: 3
       properties:
         enable.idempotence: true
+    consumer:
+      group-id: hermes-worker
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      max-poll-records: 50
+      properties:
+        spring.json.trusted.packages: "it.unibo.hermes.*"
 
 hermes:
   topics:
-    message-created: message-created
-    message-acknowledged: message-acknowledged
-    message-delivery: message-delivery
+    message-created: ${KAFKA_TOPIC_CREATED:message-created}
+    message-acknowledged: ${KAFKA_TOPIC_ACK:message-acknowledged}
+    message-delivery: ${KAFKA_TOPIC_DELIVERY:message-delivery}
+
   delivery:
     max-retry-attempts: 3
     retry-backoff-ms: 1000
+
   presence:
     key-prefix: "hermes:presence:"
     field-online: online

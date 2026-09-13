@@ -1,54 +1,62 @@
 package it.unibo.hermes.gateway.config;
 
-import it.unibo.hermes.gateway.event.MessageEvent;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringSerializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.FixedBackOff;
 
-import java.util.HashMap;
-import java.util.Map;
-
-/**
- * Spring configuration class defining the Kafka template and producer properties for publishing message events.
- */
 @Configuration
+@EnableKafka
 public class KafkaConfig {
 
-    @Value("${spring.kafka.bootstrap-servers}")
-    private String bootstrapServers;
+    private static final Logger log = LoggerFactory.getLogger(KafkaConfig.class);
+
+    @Value("${hermes.kafka.retry.max-attempts:3}")
+    private long maxRetryAttempts;
+
+    @Value("${hermes.kafka.retry.initial-backoff-ms:1000}")
+    private long retryBackoffMs;
 
     /**
-     * Creates the Kafka producer factory configured with serialization settings and failure threshold limits.
-     *
-     * @return the configured producer factory for string keys and message event payloads
+     * KafkaTemplate for Gateway producers.
      */
     @Bean
-    public ProducerFactory<String, MessageEvent> messageEventProducerFactory() {
-        Map<String, Object> props = new HashMap<>();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
-        props.put(ProducerConfig.ACKS_CONFIG, "all");
-        props.put(ProducerConfig.RETRIES_CONFIG, 0);
-        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 5_000);
-        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3_000);
-        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 3_000);
-        return new DefaultKafkaProducerFactory<>(props);
+    public KafkaTemplate<String, Object> kafkaTemplate(ProducerFactory<String, Object> producerFactory) {
+        return new KafkaTemplate<>(producerFactory);
     }
 
     /**
-     * Creates the Kafka template for publishing message events.
-     *
-     * @return the Kafka template
+     * Configures the KafkaListenerContainerFactory for Gateway consumers.
      */
     @Bean
-    public KafkaTemplate<String, MessageEvent> kafkaTemplate() {
-        return new KafkaTemplate<>(messageEventProducerFactory());
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
+            ConsumerFactory<String, String> consumerFactory) {
+
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(gatewayErrorHandler());
+        return factory;
+    }
+
+    /**
+     * Error handler for Gateway listener execution failures.
+     */
+    @Bean
+    public DefaultErrorHandler gatewayErrorHandler() {
+        FixedBackOff backOff = new FixedBackOff(retryBackoffMs, maxRetryAttempts);
+        return new DefaultErrorHandler(
+                (record, exception) -> log.error(
+                        "Gateway consumer failed after {} retries - topic={} partition={} offset={}: {}",
+                        maxRetryAttempts, record.topic(), record.partition(), record.offset(), exception.getMessage()),
+                backOff);
     }
 }

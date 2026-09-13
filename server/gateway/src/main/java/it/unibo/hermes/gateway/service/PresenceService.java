@@ -27,12 +27,12 @@ public class PresenceService {
     /**
      * Marks a user as online and records the hosting gateway instance identifier in Redis.
      *
-     * @param username          the username of the connecting client
-     * @param gatewayInstanceId the unique identifier of the gateway instance hosting the active session
+     * @param username  the username of the connecting client
+     * @param gatewayId the unique identifier of the gateway hosting the active session
      */
-    public void setOnline(String username, String gatewayInstanceId) {
-        presenceAdapter.setOnline(username, gatewayInstanceId);
-        log.debug("User '{}' marked ONLINE on gateway '{}'", username, gatewayInstanceId);
+    public void setOnline(String username, String gatewayId) {
+        presenceAdapter.setOnline(username, gatewayId);
+        log.debug("User '{}' marked ONLINE on gateway '{}'", username, gatewayId);
     }
 
     /**
@@ -70,7 +70,7 @@ public class PresenceService {
      * @param username the username of the target user
      * @return the hosting gateway instance identifier, or {@code null} if the user is offline
      */
-    public String getGatewayInstanceId(String username) {
-        return presenceAdapter.getGatewayInstanceId(username);
+    public String getGatewayId(String username) {
+        return presenceAdapter.getGatewayId(username);
     }
 }

@@ -1,16 +1,17 @@
 package it.unibo.hermes.worker.service;
 
+import it.unibo.hermes.worker.adapter.CassandraMessageAdapter;
+import it.unibo.hermes.worker.adapter.RedisPresenceAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.domain.PresenceInfo;
-import it.unibo.hermes.worker.event.MessageCreatedEvent;
-import it.unibo.hermes.worker.producer.DeliveryEventProducer;
+import it.unibo.hermes.worker.event.MessageEvent;
+import it.unibo.hermes.worker.producer.MessageDeliveryProducer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,90 +21,97 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryServiceTest {
 
+    private static final String GATEWAY_ID = "gateway-1";
+
     @Mock
-    private PersistenceService persistenceService;
+    private CassandraMessageAdapter cassandraMessageAdapter;
+
     @Mock
-    private RedisPresenceService presenceService;
+    private RedisPresenceAdapter presenceAdapter;
+
     @Mock
-    private DeliveryEventProducer deliveryEventProducer;
+    private MessageDeliveryProducer messageDeliveryProducer;
 
     private DeliveryService deliveryService;
 
     @BeforeEach
     void setUp() {
-        deliveryService = new DeliveryService(persistenceService, presenceService, deliveryEventProducer);
+        deliveryService = new DeliveryService(cassandraMessageAdapter, presenceAdapter, messageDeliveryProducer);
     }
 
-    private MessageCreatedEvent event() {
-        return new MessageCreatedEvent(
+    private MessageEvent createSampleEvent() {
+        return new MessageEvent(
                 UUID.randomUUID().toString(),
                 "alice-bob",
                 "alice", "bob", "hi",
-                1L, Instant.now());
+                1L);
     }
 
     @Test
     void shouldSkipAlreadyProcessedDuplicateEvent() {
-        MessageCreatedEvent event = event();
-        when(persistenceService.isAlreadyProcessed(event.messageId())).thenReturn(true);
+        MessageEvent event = createSampleEvent();
+        when(cassandraMessageAdapter.isAlreadyProcessed(event.messageId())).thenReturn(true);
 
         deliveryService.processMessage(event);
 
-        verify(persistenceService, never()).persistMessage(any());
-        verifyNoInteractions(presenceService, deliveryEventProducer);
+        verify(cassandraMessageAdapter, never()).persistMessage(any());
+        verifyNoInteractions(presenceAdapter, messageDeliveryProducer);
     }
 
     @Test
     void shouldDeliverImmediatelyWhenRecipientIsOnline() {
-        MessageCreatedEvent event = event();
-        when(persistenceService.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceService.getPresence("bob"))
-                .thenReturn(Optional.of(PresenceInfo.online("bob", "gw-1")));
+        MessageEvent event = createSampleEvent();
+        when(cassandraMessageAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
+        when(presenceAdapter.getPresence("bob"))
+                .thenReturn(Optional.of(PresenceInfo.online("bob", GATEWAY_ID)));
 
         deliveryService.processMessage(event);
 
-        verify(persistenceService).persistMessage(event);
-        verify(deliveryEventProducer).publishDeliveryEvent(event, "gw-1");
-        verify(persistenceService).updateDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
-    }
-
-    @Test
-    void shouldStoreMessageWhenRecipientIsOffline() {
-        MessageCreatedEvent event = event();
-        when(persistenceService.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceService.getPresence("bob"))
-                .thenReturn(Optional.of(PresenceInfo.offline("bob")));
-
-        deliveryService.processMessage(event);
-
-        verify(persistenceService).persistMessage(event);
-        verify(persistenceService).updateDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verifyNoInteractions(deliveryEventProducer);
-    }
-
-    @Test
-    void shouldStoreMessageWhenPresenceInformationIsMissing() {
-        MessageCreatedEvent event = event();
-        when(persistenceService.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceService.getPresence("bob")).thenReturn(Optional.empty());
-
-        deliveryService.processMessage(event);
-
-        verify(persistenceService).updateDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verifyNoInteractions(deliveryEventProducer);
+        verify(cassandraMessageAdapter).persistMessage(event);
+        verify(messageDeliveryProducer).publishDeliveryEvent(event, GATEWAY_ID);
+        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
     }
 
     @Test
     void shouldFallBackToStoredWhenPublishingDeliveryEventFails() {
-        MessageCreatedEvent event = event();
-        when(persistenceService.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceService.getPresence("bob")).thenReturn(Optional.of(PresenceInfo.online("bob", "gw-1")));
-        doThrow(new RuntimeException("kafka down"))
-                .when(deliveryEventProducer).publishDeliveryEvent(event, "gw-1");
+        MessageEvent event = createSampleEvent();
+        when(cassandraMessageAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
+        when(presenceAdapter.getPresence("bob"))
+                .thenReturn(Optional.of(PresenceInfo.online("bob", GATEWAY_ID)));
+        doThrow(new RuntimeException("Kafka delivery stream timeout"))
+                .when(messageDeliveryProducer).publishDeliveryEvent(event, GATEWAY_ID);
 
         deliveryService.processMessage(event);
 
-        verify(persistenceService).updateDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verify(persistenceService, never()).updateDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
+        verify(cassandraMessageAdapter).persistMessage(event);
+        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
+        verify(cassandraMessageAdapter, never()).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
+    }
+
+    @Test
+    void shouldStoreMessageWhenRecipientIsOffline() {
+        MessageEvent event = createSampleEvent();
+        when(cassandraMessageAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
+        when(presenceAdapter.getPresence("bob"))
+                .thenReturn(Optional.of(PresenceInfo.offline("bob")));
+
+        deliveryService.processMessage(event);
+
+        verify(cassandraMessageAdapter).persistMessage(event);
+        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
+        verifyNoInteractions(messageDeliveryProducer);
+    }
+
+    @Test
+    void shouldStoreMessageWhenPresenceInformationIsMissing() {
+        MessageEvent event = createSampleEvent();
+        when(cassandraMessageAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
+        when(presenceAdapter.getPresence("bob")).thenReturn(Optional.empty());
+
+        deliveryService.processMessage(event);
+
+        verify(cassandraMessageAdapter).persistMessage(event);
+        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
+        verifyNoInteractions(messageDeliveryProducer);
     }
 }

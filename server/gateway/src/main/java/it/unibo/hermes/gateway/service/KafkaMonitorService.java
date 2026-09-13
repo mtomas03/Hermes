@@ -2,7 +2,6 @@ package it.unibo.hermes.gateway.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import it.unibo.hermes.gateway.adapter.KafkaPublisherAdapter;
 import it.unibo.hermes.gateway.dto.WsMessage;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.slf4j.Logger;
@@ -22,7 +21,7 @@ public class KafkaMonitorService {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaMonitorService.class);
 
-    private final KafkaPublisherAdapter kafkaAdapter;
+    private final KafkaHealthProbe kafkaHealthProbe;
     private final WebSocketSessionRegistry registry;
     private final ObjectMapper objectMapper;
 
@@ -34,14 +33,14 @@ public class KafkaMonitorService {
     /**
      * Creates the Kafka monitoring service.
      *
-     * @param kafkaAdapter the adapter executing broker connectivity health probes
-     * @param registry     the registry tracking active local WebSocket sessions
-     * @param objectMapper the object mapper used to serialize client notification frames
+     * @param kafkaHealthProbe the probe executing broker connectivity health checks
+     * @param registry         the registry tracking active local WebSocket sessions
+     * @param objectMapper     the object mapper used to serialize client notification frames
      */
-    public KafkaMonitorService(KafkaPublisherAdapter kafkaAdapter,
+    public KafkaMonitorService(KafkaHealthProbe kafkaHealthProbe,
                                WebSocketSessionRegistry registry,
                                ObjectMapper objectMapper) {
-        this.kafkaAdapter = kafkaAdapter;
+        this.kafkaHealthProbe = kafkaHealthProbe;
         this.registry = registry;
         this.objectMapper = objectMapper;
     }
@@ -56,15 +55,13 @@ public class KafkaMonitorService {
     }
 
     /**
-     * Periodically verifies Kafka broker health and triggers client reconnection procedures upon service recovery.
-     *
-     * <p> Updates the internal availability flag based on broker probe results and broadcasts reconnection requests
-     * whenever the system transitions from an unavailable state back to healthy.
+     * Periodically verifies Kafka broker health and
+     * triggers client reconnection procedures upon service recovery.
      */
     @Scheduled(fixedDelayString = "${hermes.gateway.heartbeat-check-ms:30000}")
     public void checkBackbone() {
         boolean wasAvailable = backboneAvailable.get();
-        boolean nowAvailable = kafkaAdapter.isHealthy();
+        boolean nowAvailable = kafkaHealthProbe.isHealthy();
 
         backboneAvailable.set(nowAvailable);
 

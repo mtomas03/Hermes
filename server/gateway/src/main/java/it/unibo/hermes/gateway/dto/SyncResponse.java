@@ -1,6 +1,5 @@
 package it.unibo.hermes.gateway.dto;
 
-import java.time.Instant;
 import java.util.List;
 
 /**

@@ -2,8 +2,6 @@ package it.unibo.hermes.gateway.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
-import java.time.Instant;
-
 /**
  * Data transfer object representing a WebSocket message exchanged between the client and the gateway.
  *

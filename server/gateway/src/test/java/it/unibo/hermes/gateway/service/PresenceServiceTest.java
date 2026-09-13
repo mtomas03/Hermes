@@ -26,9 +26,9 @@ class PresenceServiceTest {
 
     @Test
     void shouldMarkUserOnlineWithGatewayId() {
-        service.setOnline("alice", "gw-1");
+        service.setOnline("alice", "gateway-1");
 
-        verify(presenceAdapter).setOnline("alice", "gw-1");
+        verify(presenceAdapter).setOnline("alice", "gateway-1");
     }
 
     @Test
@@ -61,15 +61,15 @@ class PresenceServiceTest {
 
     @Test
     void shouldReturnGatewayInstanceIdFromAdapter() {
-        when(presenceAdapter.getGatewayInstanceId("alice")).thenReturn("gw-2");
+        when(presenceAdapter.getGatewayId("alice")).thenReturn("gw-2");
 
-        assertThat(service.getGatewayInstanceId("alice")).isEqualTo("gw-2");
+        assertThat(service.getGatewayId("alice")).isEqualTo("gw-2");
     }
 
     @Test
     void shouldReturnNullGatewayInstanceIdWhenUserOffline() {
-        when(presenceAdapter.getGatewayInstanceId("ghost")).thenReturn(null);
+        when(presenceAdapter.getGatewayId("ghost")).thenReturn(null);
 
-        assertThat(service.getGatewayInstanceId("ghost")).isNull();
+        assertThat(service.getGatewayId("ghost")).isNull();
     }
 }

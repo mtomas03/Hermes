@@ -2,7 +2,6 @@ package it.unibo.hermes.gateway.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import it.unibo.hermes.gateway.adapter.KafkaPublisherAdapter;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +22,7 @@ import static org.mockito.Mockito.*;
 class KafkaMonitorServiceTest {
 
     @Mock
-    private KafkaPublisherAdapter kafkaAdapter;
+    private KafkaHealthProbe kafkaHealthProbe;
     @Mock
     private WebSocketSessionRegistry registry;
     @Mock
@@ -33,7 +32,7 @@ class KafkaMonitorServiceTest {
 
     @BeforeEach
     void setUp() throws JsonProcessingException {
-        monitorService = new KafkaMonitorService(kafkaAdapter, registry, objectMapper);
+        monitorService = new KafkaMonitorService(kafkaHealthProbe, registry, objectMapper);
         lenient().when(objectMapper.writeValueAsString(any()))
                 .thenReturn("{\"type\":\"FORCE_RECONNECT\"}");
     }
@@ -45,7 +44,7 @@ class KafkaMonitorServiceTest {
 
     @Test
     void shouldNotBroadcastWhenBackboneStaysAvailable() {
-        when(kafkaAdapter.isHealthy()).thenReturn(true);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(true);
 
         monitorService.checkBackbone();
 
@@ -55,7 +54,7 @@ class KafkaMonitorServiceTest {
 
     @Test
     void shouldFlipToUnavailableWithoutBroadcastingWhenBackboneGoesDown() {
-        when(kafkaAdapter.isHealthy()).thenReturn(false);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(false);
 
         monitorService.checkBackbone();
 
@@ -66,7 +65,7 @@ class KafkaMonitorServiceTest {
     @Test
     void shouldBroadcastForceReconnectWhenBackboneRecovers() throws Exception {
         // First probe goes down, second probe recovers
-        when(kafkaAdapter.isHealthy()).thenReturn(false, true);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
         WebSocketSession session = mock(WebSocketSession.class);
         when(session.isOpen()).thenReturn(true);
         when(registry.allEntries()).thenReturn(
@@ -81,7 +80,7 @@ class KafkaMonitorServiceTest {
 
     @Test
     void shouldSkipClosedSessionsWhenBroadcasting() throws Exception {
-        when(kafkaAdapter.isHealthy()).thenReturn(false, true);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
         WebSocketSession closedSession = mock(WebSocketSession.class);
         when(closedSession.isOpen()).thenReturn(false);
         when(registry.allEntries()).thenReturn(
@@ -95,7 +94,7 @@ class KafkaMonitorServiceTest {
 
     @Test
     void shouldContinueBroadcastingToOtherSessionsWhenOneSendFails() throws Exception {
-        when(kafkaAdapter.isHealthy()).thenReturn(false, true);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
         WebSocketSession failing = mock(WebSocketSession.class);
         WebSocketSession healthy = mock(WebSocketSession.class);
         when(failing.isOpen()).thenReturn(true);
@@ -117,7 +116,7 @@ class KafkaMonitorServiceTest {
         when(objectMapper.writeValueAsString(any()))
                 .thenThrow(new JsonProcessingException("boom") {
                 });
-        when(kafkaAdapter.isHealthy()).thenReturn(false, true);
+        when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
 
         monitorService.checkBackbone();
         monitorService.checkBackbone();
