@@ -1,31 +1,30 @@
 package it.unibo.hermes.gateway.service;
 
-import it.unibo.hermes.gateway.adapter.CassandraMessageAdapter;
-import it.unibo.hermes.gateway.adapter.KafkaPublisherAdapter;
-import it.unibo.hermes.gateway.domain.Message;
+import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.domain.MessageStatus;
 import it.unibo.hermes.gateway.dto.WsMessage;
+import it.unibo.hermes.gateway.entity.MessageByConversation;
 import it.unibo.hermes.gateway.event.MessageEvent;
 import it.unibo.hermes.gateway.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.producer.MessageCreatedProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Core message routing service that processes inbound client messages through Kafka or fallback storage.
+ * Service that processes inbound client messages through Kafka or Cassandra.
  */
 @Service
-public class MessagePublisherService {
+public class InboundMessageService {
 
-    private static final Logger log = LoggerFactory.getLogger(MessagePublisherService.class);
+    private static final Logger log = LoggerFactory.getLogger(InboundMessageService.class);
 
-    private final KafkaPublisherAdapter kafkaAdapter;
-    private final CassandraMessageAdapter cassandraAdapter;
+    private final MessageCreatedProducer messageCreatedProducer;
+    private final CassandraAdapter cassandraAdapter;
 
     @Value("${hermes.kafka.retry.max-attempts:3}")
     private int maxAttempts;
@@ -39,26 +38,26 @@ public class MessagePublisherService {
     /**
      * Creates the message publisher service.
      *
-     * @param kafkaAdapter     the adapter handling event publication to the Kafka messaging backbone
-     * @param cassandraAdapter the adapter managing direct message persistence in Cassandra
+     * @param messageCreatedProducer the producer handling message creation event publication to Kafka
+     * @param cassandraAdapter       the adapter managing direct fallback persistence in Cassandra
      */
-    public MessagePublisherService(KafkaPublisherAdapter kafkaAdapter,
-                                   CassandraMessageAdapter cassandraAdapter) {
-        this.kafkaAdapter = kafkaAdapter;
+    public InboundMessageService(MessageCreatedProducer messageCreatedProducer,
+                                 CassandraAdapter cassandraAdapter) {
+        this.messageCreatedProducer = messageCreatedProducer;
         this.cassandraAdapter = cassandraAdapter;
     }
 
     /**
      * Processes and routes an incoming WebSocket message event through Kafka or direct Cassandra fallback.
      *
-     * @param inbound  the validated message received from the client
+     * @param inbound        the validated message received from the client
      * @param senderUsername the authenticated username of the sender
      * @return the accepted message event used to construct the acknowledgement response
      * @throws PersistenceUnavailableException if both Kafka and Cassandra are unreachable
      */
     public MessageEvent publish(WsMessage inbound, String senderUsername) {
         String recipientUsername = inbound.getRecipientUsername();
-        String conversationId = Message.conversationId(senderUsername, recipientUsername);
+        String conversationId = inbound.getConversationId();
         Long logicalTimestamp = inbound.getLogicalTimestamp();
         String messageContent = inbound.getContent();
         UUID messageId = UUID.fromString(inbound.getMessageId());
@@ -79,7 +78,7 @@ public class MessagePublisherService {
 
         log.warn("Kafka unavailable - falling back to Cassandra for message {}", messageId);
         try {
-            cassandraAdapter.save(new Message(
+            cassandraAdapter.saveFallback(new MessageByConversation(
                     messageId,
                     conversationId,
                     senderUsername,
@@ -88,7 +87,7 @@ public class MessagePublisherService {
                     logicalTimestamp,
                     MessageStatus.STORED
             ));
-            log.info("Message {} written to Cassandra via fallback path", messageId);
+            log.info("Message {} written to Cassandra across both tables via fallback path", messageId);
             return event;
         } catch (Exception cassEx) {
             throw new PersistenceUnavailableException(
@@ -106,7 +105,7 @@ public class MessagePublisherService {
         long backoff = initialBackoffMs;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                kafkaAdapter.publish(event);
+                messageCreatedProducer.publish(event);
                 return true;
             } catch (BackboneUnavailableException e) {
                 log.warn("Kafka publish attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());

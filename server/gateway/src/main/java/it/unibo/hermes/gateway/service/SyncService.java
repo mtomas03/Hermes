@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.service;
 
-import it.unibo.hermes.gateway.adapter.CassandraMessageAdapter;
-import it.unibo.hermes.gateway.domain.Message;
+import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.dto.SyncResponse;
 import it.unibo.hermes.gateway.dto.SyncResponse.MessageDto;
+import it.unibo.hermes.gateway.entity.MessageByConversation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
@@ -19,14 +19,14 @@ public class SyncService {
 
     private static final Logger log = LoggerFactory.getLogger(SyncService.class);
 
-    private final CassandraMessageAdapter cassandraAdapter;
+    private final CassandraAdapter cassandraAdapter;
 
     /**
      * Creates the synchronisation service.
      *
      * @param cassandraAdapter the adapter managing message persistence queries in Cassandra
      */
-    public SyncService(CassandraMessageAdapter cassandraAdapter) {
+    public SyncService(CassandraAdapter cassandraAdapter) {
         this.cassandraAdapter = cassandraAdapter;
     }
 
@@ -45,11 +45,11 @@ public class SyncService {
 
         validateParticipant(requestingUser, conversationId);
 
-        List<Message> messages = afterLogicalTs < 0
-                ? cassandraAdapter.findAll(conversationId)
-                : cassandraAdapter.findAfter(conversationId, afterLogicalTs);
+        List<MessageByConversation> messageByConversations = afterLogicalTs < 0
+                ? cassandraAdapter.findAllMessages(conversationId)
+                : cassandraAdapter.findMessageAfter(conversationId, afterLogicalTs);
 
-        List<MessageDto> dtos = messages.stream()
+        List<MessageDto> dtos = messageByConversations.stream()
                 .map(m -> new MessageDto(
                         m.getMessageId().toString(),
                         m.getConversationId(),
@@ -57,11 +57,11 @@ public class SyncService {
                         m.getRecipientUsername(),
                         m.getContent(),
                         m.getLogicalTimestamp(),
-                        m.getStatus().name()
+                        m.getDeliveryStatus().name()
                 ))
                 .toList();
 
-        log.debug("Sync for user '{}' in '{}': {} messages returned (after ts={})",
+        log.debug("Sync for user '{}' in '{}': {} messageByConversations returned (after ts={})",
                 requestingUser, conversationId, dtos.size(), afterLogicalTs);
 
         return new SyncResponse(conversationId, dtos);

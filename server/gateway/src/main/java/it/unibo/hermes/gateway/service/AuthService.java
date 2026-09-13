@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.service;
 
-import it.unibo.hermes.gateway.domain.User;
 import it.unibo.hermes.gateway.dto.AuthResponse;
 import it.unibo.hermes.gateway.dto.LoginRequest;
 import it.unibo.hermes.gateway.dto.RegisterRequest;
+import it.unibo.hermes.gateway.entity.User;
 import it.unibo.hermes.gateway.repository.UserRepository;
 import it.unibo.hermes.gateway.security.JwtProvider;
 import org.slf4j.Logger;

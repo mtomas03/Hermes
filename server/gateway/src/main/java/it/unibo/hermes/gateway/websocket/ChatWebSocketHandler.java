@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.gateway.dto.WsMessage;
 import it.unibo.hermes.gateway.dto.WsMessageType;
+import it.unibo.hermes.gateway.event.MessageAckEvent;
 import it.unibo.hermes.gateway.event.MessageEvent;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.producer.MessageAckProducer;
 import it.unibo.hermes.gateway.security.WebSocketJwtHandshakeInterceptor;
-import it.unibo.hermes.gateway.service.MessagePublisherService;
+import it.unibo.hermes.gateway.service.InboundMessageService;
 import it.unibo.hermes.gateway.service.PresenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +32,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final WebSocketSessionRegistry registry;
     private final PresenceService presenceService;
-    private final MessagePublisherService publisherService;
+    private final InboundMessageService publisherService;
+    private final MessageAckProducer messageAckProducer;
     private final ObjectMapper objectMapper;
 
     @Value("${hermes.gateway.instance-id:gateway-1}")
@@ -39,18 +42,21 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     /**
      * Creates the chat WebSocket handler.
      *
-     * @param registry         the registry tracking active local WebSocket sessions
-     * @param presenceService  the service updating user online presence states
-     * @param publisherService the service publishing message events to downstream channels
-     * @param objectMapper     the object mapper used for WebSocket message JSON serialization
+     * @param registry           the registry tracking active local WebSocket sessions
+     * @param presenceService    the service updating user online presence states
+     * @param publisherService   the service publishing message events to downstream channels
+     * @param messageAckProducer the producer forwarding client ACK events to Kafka
+     * @param objectMapper       the object mapper used for WebSocket message JSON serialization
      */
     public ChatWebSocketHandler(WebSocketSessionRegistry registry,
                                 PresenceService presenceService,
-                                MessagePublisherService publisherService,
+                                InboundMessageService publisherService,
+                                MessageAckProducer messageAckProducer,
                                 ObjectMapper objectMapper) {
         this.registry = registry;
         this.presenceService = presenceService;
         this.publisherService = publisherService;
+        this.messageAckProducer = messageAckProducer;
         this.objectMapper = objectMapper;
     }
 
@@ -68,10 +74,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Removes the closed WebSocket session from the local registry and marks the user offline in Redis.
+     * Unregisters the WebSocket session and updates the user's presence to offline.
      *
      * @param session the closed WebSocket session
-     * @param status  the status indicating why the connection closed
+     * @param status  the close status
      */
     @Override
     public void afterConnectionClosed(@NonNull WebSocketSession session, @NonNull CloseStatus status) {
@@ -126,13 +132,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Refreshes the client's heartbeat timestamp and replies with a PONG response message.
-     *
-     * @param session  the WebSocket session
-     * @param username the username of the pinging client
-     * @throws IOException if sending the response message fails
-     */
     private void handlePing(WebSocketSession session, String username) throws IOException {
         registry.recordHeartbeat(username);
         presenceService.refreshTtl(username);
@@ -140,13 +139,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         log.trace("PING/PONG for '{}'", username);
     }
 
-    /**
-     * Validates and publishes an outgoing message, sending an acceptance response back to the sender.
-     *
-     * @param session the sending WebSocket session
-     * @param sender  the username of the message sender
-     * @param msg     the outgoing message payload
-     */
     private void handleSendMessage(WebSocketSession session, String sender, WsMessage msg) {
         if (msg.getRecipientUsername() == null || msg.getRecipientUsername().isBlank()) {
             sendError(session, "MISSING_RECIPIENT", "Field 'recipientUsername' is required");
@@ -166,8 +158,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
             WsMessage ack = new WsMessage();
             ack.setType(WsMessageType.MESSAGE_ACCEPTED);
-            ack.setMessageId(accepted.getMessageId().toString());
-            ack.setLogicalTimestamp(accepted.getLogicalTimestamp());
+            ack.setMessageId(accepted.messageId().toString());
+            ack.setLogicalTimestamp(accepted.logicalTimestamp());
             send(session, ack);
 
         } catch (PersistenceUnavailableException e) {
@@ -180,28 +172,24 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Logs recipient message acknowledgements received from the client.
-     *
-     * @param session  the WebSocket session
-     * @param username the username of the acknowledging client
-     * @param msg      the acknowledgement message containing the target message ID
-     */
-    private void handleAck(WebSocketSession session, String username, WsMessage msg) {
+    private void handleAck(WebSocketSession session, String recipientUsername, WsMessage msg) {
         if (msg.getMessageId() == null) {
-            log.warn("ACK from user '{}' is missing messageId", username);
+            log.warn("ACK from user '{}' is missing messageId", recipientUsername);
             return;
         }
-        log.debug("ACK received from user '{}' for message {}", username, msg.getMessageId());
+        log.debug("ACK received from recipient '{}' for message {}", recipientUsername, msg.getMessageId());
+
+        MessageAckEvent ackEvent = new MessageAckEvent(
+                msg.getMessageId(),
+                msg.getConversationId(),
+                msg.getSenderUsername(),
+                recipientUsername,
+                msg.getLogicalTimestamp() != null ? msg.getLogicalTimestamp() : 0L
+        );
+
+        messageAckProducer.publishAck(ackEvent);
     }
 
-    /**
-     * Formats and transmits a WebSocket error message to the client.
-     *
-     * @param session the target WebSocket session
-     * @param code    the application error code
-     * @param reason  the descriptive reason for the failure
-     */
     private void sendError(WebSocketSession session, String code, String reason) {
         try {
             send(session, WsMessage.error(code, reason));
@@ -210,13 +198,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Serializes and transmits a WebSocket message to the client in a thread-safe manner.
-     *
-     * @param session the target WebSocket session
-     * @param message the message object to serialize and transmit
-     * @throws IOException if a transport write error occurs
-     */
     private void send(WebSocketSession session, WsMessage message) throws IOException {
         String payload = objectMapper.writeValueAsString(message);
         synchronized (session) {
@@ -226,13 +207,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Extracts the authenticated username stored in the session attributes during handshake interception.
-     *
-     * @param session the WebSocket session
-     * @return the authenticated username
-     * @throws IllegalStateException if the username attribute is missing
-     */
     private String extractUsername(WebSocketSession session) {
         Object attr = session.getAttributes().get(
                 WebSocketJwtHandshakeInterceptor.SESSION_ATTR_USERNAME);
