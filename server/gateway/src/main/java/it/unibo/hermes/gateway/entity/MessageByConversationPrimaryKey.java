@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.domain;
+package it.unibo.hermes.gateway.entity;
 
 import org.springframework.data.cassandra.core.cql.Ordering;
 import org.springframework.data.cassandra.core.cql.PrimaryKeyType;
@@ -11,35 +11,31 @@ import java.util.UUID;
 
 /**
  * Composite primary key for the {@code messages_by_conversation} Cassandra table.
- *
- * <p> The {@code conversationId} serves as the partition key so that all messages of a
- * conversation are in the same node for efficient sequential scans. The {@code logicalTimestamp}
- * acts as the first clustering key in ascending order using a Lamport clock value recipientUsername preserve
- * causal message ordering. The {@code messageId} serves as the second clustering key, providing
- * a UUID tiebreaker that ensures key uniqueness even if two messages share the same logical timestamp.
  */
 @PrimaryKeyClass
-public class MessagePrimaryKey implements Serializable {
+public class MessageByConversationPrimaryKey implements Serializable {
 
-    @PrimaryKeyColumn(name = "conversation_id", type = PrimaryKeyType.PARTITIONED)
+    @PrimaryKeyColumn(
+            name = "conversation_id",
+            ordinal = 0,
+            type = PrimaryKeyType.PARTITIONED)
     private String conversationId;
 
     @PrimaryKeyColumn(
             name = "logical_timestamp",
+            ordinal = 1,
             type = PrimaryKeyType.CLUSTERED,
             ordering = Ordering.ASCENDING)
-    private long logicalTimestamp;
+    private Long logicalTimestamp;
 
     @PrimaryKeyColumn(
             name = "message_id",
+            ordinal = 2,
             type = PrimaryKeyType.CLUSTERED,
             ordering = Ordering.ASCENDING)
     private UUID messageId;
 
-    protected MessagePrimaryKey() {
-    }
-
-    public MessagePrimaryKey(String conversationId, long logicalTimestamp, UUID messageId) {
+    public MessageByConversationPrimaryKey(String conversationId, long logicalTimestamp, UUID messageId) {
         this.conversationId = conversationId;
         this.logicalTimestamp = logicalTimestamp;
         this.messageId = messageId;
@@ -49,21 +45,33 @@ public class MessagePrimaryKey implements Serializable {
         return conversationId;
     }
 
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
     public long getLogicalTimestamp() {
         return logicalTimestamp;
+    }
+
+    public void setLogicalTimestamp(long logicalTimestamp) {
+        this.logicalTimestamp = logicalTimestamp;
     }
 
     public UUID getMessageId() {
         return messageId;
     }
 
+    public void setMessageId(UUID messageId) {
+        this.messageId = messageId;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof MessagePrimaryKey k)) return false;
-        return logicalTimestamp == k.logicalTimestamp
-                && Objects.equals(conversationId, k.conversationId)
-                && Objects.equals(messageId, k.messageId);
+        if (!(o instanceof MessageByConversationPrimaryKey that)) return false;
+        return Objects.equals(logicalTimestamp, that.logicalTimestamp)
+                && Objects.equals(conversationId, that.conversationId)
+                && Objects.equals(messageId, that.messageId);
     }
 
     @Override

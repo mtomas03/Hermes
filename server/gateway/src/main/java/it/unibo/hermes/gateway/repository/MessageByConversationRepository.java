@@ -1,7 +1,7 @@
 package it.unibo.hermes.gateway.repository;
 
-import it.unibo.hermes.gateway.domain.Message;
-import it.unibo.hermes.gateway.domain.MessagePrimaryKey;
+import it.unibo.hermes.gateway.entity.MessageByConversation;
+import it.unibo.hermes.gateway.entity.MessageByConversationPrimaryKey;
 import org.springframework.data.cassandra.repository.CassandraRepository;
 import org.springframework.data.cassandra.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -12,8 +12,8 @@ import java.util.List;
  * Spring Data Cassandra repository accessing the {@code messages_by_conversation} table.
  */
 @Repository
-public interface MessageRepository
-        extends CassandraRepository<Message, MessagePrimaryKey> {
+public interface MessageByConversationRepository
+        extends CassandraRepository<MessageByConversation, MessageByConversationPrimaryKey> {
 
     /**
      * Retrieves messages with a logical timestamp strictly greater than {@code afterTimestamp} in causal order.
@@ -25,7 +25,7 @@ public interface MessageRepository
     @Query("SELECT * FROM messages_by_conversation " +
             "WHERE conversation_id = ?0 AND logical_timestamp > ?1 " +
             "ORDER BY logical_timestamp ASC")
-    List<Message> findMessagesAfter(String conversationId, long afterTimestamp);
+    List<MessageByConversation> findMessagesAfter(String conversationId, long afterTimestamp);
 
     /**
      * Retrieves the full message history belonging to a conversation, ordered by logical timestamp ascending.
@@ -36,5 +36,5 @@ public interface MessageRepository
     @Query("SELECT * FROM messages_by_conversation " +
             "WHERE conversation_id = ?0 " +
             "ORDER BY logical_timestamp ASC")
-    List<Message> findAllByConversationId(String conversationId);
+    List<MessageByConversation> findAllByConversationId(String conversationId);
 }

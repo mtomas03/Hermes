@@ -12,9 +12,6 @@ spring:
     hibernate:
       ddl-auto: update # auto-create schema on first run
     show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
 
   cassandra:
     keyspace-name: hermes
@@ -22,6 +19,9 @@ spring:
     port: ${CASSANDRA_PORT:9042}
     local-datacenter: ${CASSANDRA_DC:datacenter1}
     schema-action: none # schema managed via schema.cql
+    request:
+      timeout: 5s
+      consistency: LOCAL_QUORUM
 
   data:
     redis:
@@ -29,6 +29,7 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 2000ms
+      connect-timeout: 1000ms
       lettuce:
         pool:
           max-active: 8
@@ -40,7 +41,7 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       acks: all
-      retries: 0 # retries are managed by the adapter
+      retries: 0 # retries managed by adapter/service
       properties:
         delivery.timeout.ms: 5000
         request.timeout.ms: 3000
@@ -50,9 +51,14 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "it.unibo.hermes.gateway.event"
+        spring.json.trusted.packages: "it.unibo.hermes.*"
 
 hermes:
+  topics:
+    message-created: ${KAFKA_TOPIC_CREATED:message-created}
+    message-acknowledged: ${KAFKA_TOPIC_ACK:message-acknowledged}
+    message-delivery: ${KAFKA_TOPIC_DELIVERY:message-delivery}
+
   jwt:
     secret: ${JWT_SECRET:dGhpcy1pcy1hLXN0cm9uZy1zZWNyZXQtZm9yLWhlcm1lcy1kZXY=}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000} # 24h
@@ -63,7 +69,6 @@ hermes:
     heartbeat-check-ms: ${HB_CHECK_MS:30000} # check interval
 
   kafka:
-    topic-messages: hermes-messages
     retry:
       max-attempts: 3
       initial-backoff-ms: 100

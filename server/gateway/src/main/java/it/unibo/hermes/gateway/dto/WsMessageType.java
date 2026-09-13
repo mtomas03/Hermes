@@ -20,19 +20,19 @@ public enum WsMessageType {
     PING,
 
     /**
+     * Heartbeat response message returned by the Gateway in response to a PING message.
+     */
+    PONG,
+
+    /**
      * Message pushed by the Gateway to deliver an incoming message to an active recipient session.
      */
     RECEIVE_MESSAGE,
 
     /**
-     * Message dispatched by the Gateway confirming processing acceptance of a SEND_MESSAGE request.
+     * Message submitted by the Gateway confirming processing acceptance of a SEND_MESSAGE request.
      */
     MESSAGE_ACCEPTED,
-
-    /**
-     * Heartbeat response message returned by the Gateway in response to a PING message.
-     */
-    PONG,
 
     /**
      * Error notification message dispatched when message processing encounters a failure.

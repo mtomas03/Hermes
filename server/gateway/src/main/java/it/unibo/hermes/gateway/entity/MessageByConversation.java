@@ -1,24 +1,20 @@
-package it.unibo.hermes.gateway.domain;
+package it.unibo.hermes.gateway.entity;
 
+import it.unibo.hermes.gateway.domain.MessageStatus;
 import org.springframework.data.cassandra.core.mapping.Column;
 import org.springframework.data.cassandra.core.mapping.PrimaryKey;
 import org.springframework.data.cassandra.core.mapping.Table;
 
-import java.time.Instant;
 import java.util.UUID;
 
 /**
- * A single chat message persisted in Cassandra.
- *
- * <p> This entity is written either by the Worker on the normal Kafka path
- * or directly by the Gateway on the fallback path when Kafka is unavailable.
- * It is read by the Gateway during pull-based synchronisation.
+ * Cassandra entity representing a record in the {@code messages_by_conversation} table.
  */
 @Table("messages_by_conversation")
-public class Message {
+public class MessageByConversation {
 
     @PrimaryKey
-    private MessagePrimaryKey key;
+    private MessageByConversationPrimaryKey key;
 
     @Column("sender_username")
     private String senderUsername;
@@ -29,13 +25,10 @@ public class Message {
     @Column("content")
     private String content;
 
-    @Column("status")
-    private String status;
+    @Column("delivery_status")
+    private String deliveryStatus;
 
-    protected Message() {
-    }
-
-    public Message(
+    public MessageByConversation(
             UUID messageId,
             String conversationId,
             String senderUsername,
@@ -43,20 +36,11 @@ public class Message {
             String content,
             Long logicalTimestamp,
             MessageStatus status) {
-        this.key = new MessagePrimaryKey(conversationId, logicalTimestamp, messageId);
+        this.key = new MessageByConversationPrimaryKey(conversationId, logicalTimestamp, messageId);
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
-        this.status = status.name();
-    }
-
-    public static String conversationId(String userA, String userB) {
-        String username1 = userA.trim().toLowerCase();
-        String username2 = userB.trim().toLowerCase();
-
-        return username1.compareTo(username2) <= 0
-                ? username1 + "-" + username2
-                : username2 + "-" + username1;
+        this.deliveryStatus = status.name();
     }
 
     public String getConversationId() {
@@ -83,11 +67,7 @@ public class Message {
         return content;
     }
 
-    public MessageStatus getStatus() {
-        return MessageStatus.valueOf(status);
-    }
-
-    public void setStatus(MessageStatus s) {
-        this.status = s.name();
+    public MessageStatus getDeliveryStatus() {
+        return MessageStatus.valueOf(deliveryStatus);
     }
 }

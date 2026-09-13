@@ -7,7 +7,7 @@ package it.unibo.hermes.gateway.domain;
 public enum MessageStatus {
 
     /**
-     * Message has been accepted from Kafka but the delivery decision
+     * MessageByConversation has been accepted from Kafka but the delivery decision
      * has not yet been made or completed.
      */
     PENDING,

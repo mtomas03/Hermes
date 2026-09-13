@@ -1,11 +1,10 @@
-package it.unibo.hermes.gateway.domain;
+package it.unibo.hermes.gateway.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-import java.time.Instant;
 import java.util.Objects;
 
 /**
@@ -19,7 +18,7 @@ public class User {
     @Column(length = 64)
     private String username;
 
-    @Column(name = "password_hash", nullable = false, length = 255)
+    @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
     protected User() {
