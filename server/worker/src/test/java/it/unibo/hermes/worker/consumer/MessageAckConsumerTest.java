@@ -4,11 +4,10 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import it.unibo.hermes.worker.event.MessageEvent;
-import it.unibo.hermes.worker.service.DeliveryService;
+import it.unibo.hermes.worker.event.MessageAckEvent;
+import it.unibo.hermes.worker.service.AcknowledgementService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -23,7 +22,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
-class MessageCreatedConsumerTest {
+class MessageAckConsumerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -31,56 +30,51 @@ class MessageCreatedConsumerTest {
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
     @Mock
-    private DeliveryService deliveryService;
+    private AcknowledgementService acknowledgementService;
 
-    private MessageCreatedConsumer consumer;
+    private MessageAckConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new MessageCreatedConsumer(deliveryService, objectMapper);
+        consumer = new MessageAckConsumer(acknowledgementService, objectMapper);
     }
 
     private ConsumerRecord<String, String> createRecord(String jsonPayload) {
-        return new ConsumerRecord<>("message-created", 0, 0L, "alice-bob", jsonPayload);
+        return new ConsumerRecord<>("message-acknowledged", 0, 0L, "bob", jsonPayload);
     }
 
     @Test
-    void shouldDeserializeAndForwardValidEventToDeliveryService() throws Exception {
+    void shouldDeserializeAndForwardValidEventToAcknowledgementService() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageEvent expectedEvent = new MessageEvent(
+        MessageAckEvent expectedEvent = new MessageAckEvent(
                 messageId,
                 "alice-bob",
                 "alice",
                 "bob",
-                "hi",
                 1L
         );
         String jsonPayload = objectMapper.writeValueAsString(expectedEvent);
 
         consumer.consume(createRecord(jsonPayload));
 
-        ArgumentCaptor<MessageEvent> captor = ArgumentCaptor.forClass(MessageEvent.class);
-        verify(deliveryService).processMessage(captor.capture());
-        MessageEvent actualEvent = captor.getValue();
+        ArgumentCaptor<MessageAckEvent> captor = ArgumentCaptor.forClass(MessageAckEvent.class);
+        verify(acknowledgementService).processAcknowledgement(captor.capture());
+        MessageAckEvent actualEvent = captor.getValue();
         assertThat(actualEvent.messageId()).isEqualTo(messageId);
         assertThat(actualEvent.conversationId()).isEqualTo("alice-bob");
         assertThat(actualEvent.senderUsername()).isEqualTo("alice");
         assertThat(actualEvent.recipientUsername()).isEqualTo("bob");
-        assertThat(actualEvent.content()).isEqualTo("hi");
         assertThat(actualEvent.logicalTimestamp()).isEqualTo(1L);
     }
 
     @Test
-    @DisplayName("Should throw IllegalArgumentException and skip processing when JSON is malformed")
     void shouldThrowAndNotProcessWhenPayloadIsMalformed() {
-        // Given
-        ConsumerRecord<String, String> malformedRecord = createRecord("not-valid-json");
+        ConsumerRecord<String, String> malformedRecord = createRecord("{ invalid json syntax ");
 
-        // When / Then
         assertThatThrownBy(() -> consumer.consume(malformedRecord))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Cannot deserialize MessageEvent");
+                .hasMessageContaining("Cannot deserialize MessageAckEvent");
 
-        verifyNoInteractions(deliveryService);
+        verifyNoInteractions(acknowledgementService);
     }
 }

@@ -2,7 +2,7 @@ package it.unibo.hermes.worker.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.config.KafkaConfig;
-import it.unibo.hermes.worker.event.MessageCreatedEvent;
+import it.unibo.hermes.worker.event.MessageEvent;
 import it.unibo.hermes.worker.service.DeliveryService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
@@ -42,18 +42,18 @@ public class MessageCreatedConsumer {
         log.debug("Received message-created event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageCreatedEvent event = deserialize(record.value());
-        log.info("Processing MessageCreatedEvent - messageId={} sender={} recipient={}",
+        MessageEvent event = deserialize(record.value());
+        log.info("Processing MessageEvent - messageId={} sender={} recipient={}",
                 event.messageId(), event.senderUsername(), event.recipientUsername());
 
         deliveryService.processMessage(event);
     }
 
-    private MessageCreatedEvent deserialize(String json) {
+    private MessageEvent deserialize(String json) {
         try {
-            return objectMapper.readValue(json, MessageCreatedEvent.class);
+            return objectMapper.readValue(json, MessageEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageCreatedEvent: " + json, e);
+            throw new IllegalArgumentException("Cannot deserialize MessageEvent: " + json, e);
         }
     }
 }

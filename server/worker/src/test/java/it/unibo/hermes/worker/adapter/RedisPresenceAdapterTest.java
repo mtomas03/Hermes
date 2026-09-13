@@ -1,4 +1,4 @@
-package it.unibo.hermes.worker.service;
+package it.unibo.hermes.worker.adapter;
 
 import it.unibo.hermes.worker.domain.PresenceInfo;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,20 +16,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class RedisPresenceServiceTest {
+class RedisPresenceAdapterTest {
+
+    private static final String KEY_PREFIX = "hermes:presence:";
+    private static final String FIELD_ONLINE = "online";
+    private static final String FIELD_GATEWAY_ID = "gatewayId";
 
     @Mock
     private StringRedisTemplate redisTemplate;
+
     @Mock
     private HashOperations<String, String, String> hashOperations;
 
-    private RedisPresenceService service;
+    private RedisPresenceAdapter adapter;
 
     @BeforeEach
     void setUp() {
-        service = new RedisPresenceService(
-                redisTemplate, "hermes:presence:",
-                "online", "gatewayId");
+        adapter = new RedisPresenceAdapter(
+                redisTemplate,
+                KEY_PREFIX,
+                FIELD_ONLINE,
+                FIELD_GATEWAY_ID);
     }
 
     @Test
@@ -37,7 +44,7 @@ class RedisPresenceServiceTest {
         when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOperations);
         when(hashOperations.entries("hermes:presence:alice")).thenReturn(Map.of());
 
-        Optional<PresenceInfo> result = service.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.getPresence("alice");
 
         assertThat(result).isEmpty();
     }
@@ -46,13 +53,13 @@ class RedisPresenceServiceTest {
     void shouldReturnOnlinePresenceWhenFlagIsTrue() {
         when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOperations);
         when(hashOperations.entries("hermes:presence:alice"))
-                .thenReturn(Map.of("online", "true", "gatewayId", "gw-1"));
+                .thenReturn(Map.of("online", "true", "gatewayId", "gateway-1"));
 
-        Optional<PresenceInfo> result = service.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.getPresence("alice");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isTrue();
-        assertThat(result.get().gatewayId()).isEqualTo("gw-1");
+        assertThat(result.get().gatewayId()).isEqualTo("gateway-1");
     }
 
     @Test
@@ -61,7 +68,7 @@ class RedisPresenceServiceTest {
         when(hashOperations.entries("hermes:presence:bob"))
                 .thenReturn(Map.of("online", "false"));
 
-        Optional<PresenceInfo> result = service.getPresence("bob");
+        Optional<PresenceInfo> result = adapter.getPresence("bob");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isFalse();
@@ -71,9 +78,9 @@ class RedisPresenceServiceTest {
     void shouldTreatMissingOnlineFieldAsOffline() {
         when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOperations);
         when(hashOperations.entries("hermes:presence:carol"))
-                .thenReturn(Map.of("gatewayId", "gw-2"));
+                .thenReturn(Map.of("gatewayId", "gateway-2"));
 
-        Optional<PresenceInfo> result = service.getPresence("carol");
+        Optional<PresenceInfo> result = adapter.getPresence("carol");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isFalse();
@@ -81,11 +88,10 @@ class RedisPresenceServiceTest {
 
     @Test
     void shouldReturnEmptyWhenRedisThrows() {
-        when(redisTemplate.opsForHash()).thenThrow(new RuntimeException("connection refused"));
+        when(redisTemplate.opsForHash()).thenThrow(new RuntimeException("Redis connection refused"));
 
-        Optional<PresenceInfo> result = service.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.getPresence("alice");
 
-        // Redis unavailability degrades safely to "treat as offline"
         assertThat(result).isEmpty();
     }
 }

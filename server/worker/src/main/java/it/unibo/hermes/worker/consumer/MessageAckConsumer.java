@@ -2,7 +2,7 @@ package it.unibo.hermes.worker.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
-import it.unibo.hermes.worker.event.MessageAcknowledgedEvent;
+import it.unibo.hermes.worker.event.MessageAckEvent;
 import it.unibo.hermes.worker.service.AcknowledgementService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
@@ -19,14 +19,14 @@ import org.springframework.stereotype.Component;
  * to {@link DeliveryStatus#ACKNOWLEDGED}.
  */
 @Component
-public class MessageAcknowledgedConsumer {
+public class MessageAckConsumer {
 
-    private static final Logger log = LoggerFactory.getLogger(MessageAcknowledgedConsumer.class);
+    private static final Logger log = LoggerFactory.getLogger(MessageAckConsumer.class);
 
     private final AcknowledgementService acknowledgementService;
     private final ObjectMapper objectMapper;
 
-    public MessageAcknowledgedConsumer(
+    public MessageAckConsumer(
             AcknowledgementService acknowledgementService,
             ObjectMapper objectMapper) {
         this.acknowledgementService = acknowledgementService;
@@ -41,18 +41,18 @@ public class MessageAcknowledgedConsumer {
         log.debug("Received message-acknowledged event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageAcknowledgedEvent event = deserialize(record.value());
-        log.info("Processing MessageAcknowledgedEvent - messageId={} recipient={}",
+        MessageAckEvent event = deserialize(record.value());
+        log.info("Processing MessageAckEvent - messageId={} recipient={}",
                 event.messageId(), event.recipientUsername());
 
         acknowledgementService.processAcknowledgement(event);
     }
 
-    private MessageAcknowledgedEvent deserialize(String json) {
+    private MessageAckEvent deserialize(String json) {
         try {
-            return objectMapper.readValue(json, MessageAcknowledgedEvent.class);
+            return objectMapper.readValue(json, MessageAckEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageAcknowledgedEvent: " + json, e);
+            throw new IllegalArgumentException("Cannot deserialize MessageAckEvent: " + json, e);
         }
     }
 }

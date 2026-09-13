@@ -2,8 +2,8 @@ package it.unibo.hermes.worker.producer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import it.unibo.hermes.worker.event.MessageCreatedEvent;
 import it.unibo.hermes.worker.event.MessageDeliveryEvent;
+import it.unibo.hermes.worker.event.MessageEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,9 +23,9 @@ import java.util.concurrent.TimeoutException;
  * Gateway instances subscribe to this topic to consume and deliver real-time messages to active WebSocket sessions.
  */
 @Component
-public class DeliveryEventProducer {
+public class MessageDeliveryProducer {
 
-    private static final Logger log = LoggerFactory.getLogger(DeliveryEventProducer.class);
+    private static final Logger log = LoggerFactory.getLogger(MessageDeliveryProducer.class);
     private static final long SEND_TIMEOUT_SECONDS = 5L;
 
     private final KafkaTemplate<String, String> kafkaTemplate;
@@ -33,13 +33,13 @@ public class DeliveryEventProducer {
     private final String deliveryTopic;
 
     /**
-     * Creates a new {@code DeliveryEventProducer}.
+     * Creates a new {@code MessageDeliveryProducer}.
      *
      * @param kafkaTemplate the template used to send records to Kafka
      * @param objectMapper  the object mapper used to serialize delivery events to JSON
      * @param deliveryTopic the configured Kafka topic name for delivery events
      */
-    public DeliveryEventProducer(
+    public MessageDeliveryProducer(
             KafkaTemplate<String, String> kafkaTemplate,
             ObjectMapper objectMapper,
             @Value("${hermes.topics.message-delivery:message-delivery}") String deliveryTopic) {
@@ -49,32 +49,32 @@ public class DeliveryEventProducer {
     }
 
     /**
-     * Creates and synchronously publishes a {@link MessageDeliveryEvent} derived from the source creation event,
+     * Creates and synchronously publishes a {@link MessageDeliveryEvent},
      * enriched with the destination gateway identifier. The payload is serialized to JSON and published
-     * using the target {@code gatewayId} as the record key to guarantee ordered delivery per gateway instance.
+     * using the {@code gatewayId} as the record key to guarantee ordered delivery per gateway instance.
      *
-     * @param source    the original message creation event containing payload and routing metadata
-     * @param gatewayId the identifier of the target gateway instance hosting the recipient's session
+     * @param messageEvent the original message creation event containing payload and routing metadata
+     * @param gatewayId    the identifier of the target gateway instance hosting the recipient's session
      * @throws IllegalStateException if event JSON serialization fails
      * @throws RuntimeException      if the send operation is interrupted, times out, or fails on Kafka
      */
-    public void publishDeliveryEvent(MessageCreatedEvent source, String gatewayId) {
+    public void publishDeliveryEvent(MessageEvent messageEvent, String gatewayId) {
         MessageDeliveryEvent deliveryEvent = new MessageDeliveryEvent(
-                source.messageId(),
-                source.conversationId(),
-                source.senderUsername(),
-                source.recipientUsername(),
+                messageEvent.messageId(),
+                messageEvent.conversationId(),
+                messageEvent.senderUsername(),
+                messageEvent.recipientUsername(),
                 gatewayId,
-                source.content(),
-                source.logicalTimestamp(),
-                source.physicalTimestamp());
+                messageEvent.content(),
+                messageEvent.logicalTimestamp()
+        );
 
         String payload;
         try {
             payload = objectMapper.writeValueAsString(deliveryEvent);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize MessageDeliveryEvent for message "
-                    + source.messageId(), e);
+                    + messageEvent.messageId(), e);
         }
 
         try {
@@ -84,7 +84,7 @@ public class DeliveryEventProducer {
                     .get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             log.debug("Delivery event published for message {} to gateway {} (partition={}, offset={})",
-                    source.messageId(),
+                    messageEvent.messageId(),
                     gatewayId,
                     result.getRecordMetadata().partition(),
                     result.getRecordMetadata().offset());
@@ -92,10 +92,10 @@ public class DeliveryEventProducer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Interrupted while publishing delivery event for message "
-                    + source.messageId(), e);
+                    + messageEvent.messageId(), e);
         } catch (ExecutionException | TimeoutException e) {
             throw new RuntimeException("Failed to publish delivery event for message "
-                    + source.messageId(), e);
+                    + messageEvent.messageId(), e);
         }
     }
 }

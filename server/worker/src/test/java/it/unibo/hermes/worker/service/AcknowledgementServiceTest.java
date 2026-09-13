@@ -1,7 +1,8 @@
 package it.unibo.hermes.worker.service;
 
+import it.unibo.hermes.worker.adapter.CassandraMessageAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
-import it.unibo.hermes.worker.event.MessageAcknowledgedEvent;
+import it.unibo.hermes.worker.event.MessageAckEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,23 +17,27 @@ import static org.mockito.Mockito.verify;
 class AcknowledgementServiceTest {
 
     @Mock
-    private PersistenceService persistenceService;
+    private CassandraMessageAdapter cassandraMessageAdapter;
 
     private AcknowledgementService ackService;
 
     @BeforeEach
     void setUp() {
-        ackService = new AcknowledgementService(persistenceService);
+        ackService = new AcknowledgementService(cassandraMessageAdapter);
     }
 
     @Test
     void shouldMarkMessageAsAcknowledged() {
         String messageId = UUID.randomUUID().toString();
-        MessageAcknowledgedEvent event = new MessageAcknowledgedEvent(
-                messageId, "alice-bob", "bob", System.currentTimeMillis());
+        MessageAckEvent event = new MessageAckEvent(
+                messageId,
+                "alice-bob",
+                "alice", "bob",
+                1L
+        );
 
         ackService.processAcknowledgement(event);
 
-        verify(persistenceService).updateDeliveryStatus(messageId, DeliveryStatus.ACKNOWLEDGED);
+        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(messageId, DeliveryStatus.ACKNOWLEDGED);
     }
 }
