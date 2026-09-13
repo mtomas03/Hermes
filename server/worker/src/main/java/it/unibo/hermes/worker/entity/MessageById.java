@@ -4,17 +4,13 @@ import org.springframework.data.cassandra.core.mapping.Column;
 import org.springframework.data.cassandra.core.mapping.PrimaryKey;
 import org.springframework.data.cassandra.core.mapping.Table;
 
-import java.time.Instant;
 import java.util.UUID;
 
 /**
  * Cassandra entity representing a record in the {@code message_by_id} table.
- *
- * <p>This table acts as a secondary view denormalised by {@code message_id},
- * allowing O(1) single-partition lookups and updates without needing the conversation context.
  */
 @Table("message_by_id")
-public class MessageByIdEntity {
+public class MessageById {
 
     @PrimaryKey("message_id")
     private UUID messageId;
@@ -22,20 +18,17 @@ public class MessageByIdEntity {
     @Column("conversation_id")
     private String conversationId;
 
-    @Column("sender_id")
-    private String senderId;
+    @Column("sender_username")
+    private String senderUsername;
 
-    @Column("recipient_id")
-    private String recipientId;
+    @Column("recipient_username")
+    private String recipientUsername;
 
     @Column("content")
     private String content;
 
     @Column("logical_timestamp")
     private long logicalTimestamp;
-
-    @Column("physical_timestamp")
-    private Instant physicalTimestamp;
 
     @Column("delivery_status")
     private String deliveryStatus;
@@ -45,22 +38,21 @@ public class MessageByIdEntity {
      *
      * @param messageId         the unique identifier of the message
      * @param conversationId    the unique identifier of the conversation
-     * @param senderId          the identifier of the sender
-     * @param recipientId       the identifier of the recipient
+     * @param senderUsername    the identifier of the sender
+     * @param recipientUsername the identifier of the recipient
      * @param content           the textual content of the message
      * @param logicalTimestamp  the Lamport logical timestamp of the message
-     * @param physicalTimestamp the server creation physical timestamp
      * @param deliveryStatus    the current delivery status name
      */
-    public MessageByIdEntity(UUID messageId, String conversationId, String senderId, String recipientId,
-                             String content, long logicalTimestamp, Instant physicalTimestamp, String deliveryStatus) {
+    public MessageById(UUID messageId, String conversationId,
+                       String senderUsername, String recipientUsername,
+                       String content, long logicalTimestamp, String deliveryStatus) {
         this.messageId = messageId;
         this.conversationId = conversationId;
-        this.senderId = senderId;
-        this.recipientId = recipientId;
+        this.senderUsername = senderUsername;
+        this.recipientUsername = recipientUsername;
         this.content = content;
         this.logicalTimestamp = logicalTimestamp;
-        this.physicalTimestamp = physicalTimestamp;
         this.deliveryStatus = deliveryStatus;
     }
 
@@ -80,20 +72,20 @@ public class MessageByIdEntity {
         this.conversationId = conversationId;
     }
 
-    public String getSenderId() {
-        return senderId;
+    public String getSenderUsername() {
+        return senderUsername;
     }
 
-    public void setSenderId(String senderId) {
-        this.senderId = senderId;
+    public void setSenderUsername(String senderUsername) {
+        this.senderUsername = senderUsername;
     }
 
-    public String getRecipientId() {
-        return recipientId;
+    public String getRecipientUsername() {
+        return recipientUsername;
     }
 
-    public void setRecipientId(String recipientId) {
-        this.recipientId = recipientId;
+    public void setRecipientUsername(String recipientUsername) {
+        this.recipientUsername = recipientUsername;
     }
 
     public String getContent() {
@@ -110,14 +102,6 @@ public class MessageByIdEntity {
 
     public void setLogicalTimestamp(long logicalTimestamp) {
         this.logicalTimestamp = logicalTimestamp;
-    }
-
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
-    }
-
-    public void setPhysicalTimestamp(Instant physicalTimestamp) {
-        this.physicalTimestamp = physicalTimestamp;
     }
 
     public String getDeliveryStatus() {

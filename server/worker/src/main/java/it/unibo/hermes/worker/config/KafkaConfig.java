@@ -8,15 +8,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
-/**
- * Kafka consumer and error-handler configuration.
- *
- * <p> Retry policy: fixed backoff with a bounded number of attempts.
- * When all retries are exhausted the record is logged and skipped.
- */
 @Configuration
 @EnableKafka
 public class KafkaConfig {
@@ -29,6 +25,17 @@ public class KafkaConfig {
     @Value("${hermes.delivery.retry-backoff-ms:1000}")
     private long retryBackoffMs;
 
+    /**
+     * KafkaTemplate for Worker producers.
+     */
+    @Bean
+    public KafkaTemplate<String, String> kafkaTemplate(ProducerFactory<String, String> producerFactory) {
+        return new KafkaTemplate<>(producerFactory);
+    }
+
+    /**
+     * Configures the KafkaListenerContainerFactory for Worker consumers.
+     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             ConsumerFactory<String, String> consumerFactory) {
@@ -40,20 +47,16 @@ public class KafkaConfig {
         return factory;
     }
 
+    /**
+     * Error handler for Worker listener execution failures.
+     */
     @Bean
     public DefaultErrorHandler deliveryErrorHandler() {
         FixedBackOff backOff = new FixedBackOff(retryBackoffMs, maxRetryAttempts);
-
-        DefaultErrorHandler handler = new DefaultErrorHandler(
+        return new DefaultErrorHandler(
                 (record, exception) -> log.error(
-                        "Message processing failed after {} retries - topic={} partition={} offset={}: {}",
-                        maxRetryAttempts,
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        exception.getMessage()),
+                        "Worker consumer failed after {} retries - topic={} partition={} offset={}: {}",
+                        maxRetryAttempts, record.topic(), record.partition(), record.offset(), exception.getMessage()),
                 backOff);
-
-        return handler;
     }
 }

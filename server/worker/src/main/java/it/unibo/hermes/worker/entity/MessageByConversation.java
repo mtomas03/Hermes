@@ -7,16 +7,16 @@ import org.springframework.data.cassandra.core.mapping.Table;
 import java.time.Instant;
 
 /**
- * Cassandra entity representing a record in the {@code messages} table.
+ * Cassandra entity representing a record in the {@code messages_by_conversation} table.
  *
  * <p> This table is optimised for querying messages belonging to a specific conversation,
  * ordered chronologically by their logical timestamp.
  */
-@Table("messages")
-public class ConversationMessageEntity {
+@Table("messages_by_conversation")
+public class MessageByConversation {
 
     @PrimaryKey
-    private ConversationMessageKey key;
+    private MessageByConversationPrimaryKey key;
 
     @Column("sender_username")
     private String senderUsername;
@@ -43,7 +43,7 @@ public class ConversationMessageEntity {
      * @param deliveryStatus    the current delivery status
      * @param physicalTimestamp the server creation physical timestamp
      */
-    public ConversationMessageEntity(ConversationMessageKey key, String senderUsername, String recipientUsername, String content, String deliveryStatus, Instant physicalTimestamp) {
+    public MessageByConversation(MessageByConversationPrimaryKey key, String senderUsername, String recipientUsername, String content, String deliveryStatus, Instant physicalTimestamp) {
         this.key = key;
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
@@ -52,11 +52,11 @@ public class ConversationMessageEntity {
         this.physicalTimestamp = physicalTimestamp;
     }
 
-    public ConversationMessageKey getKey() {
+    public MessageByConversationPrimaryKey getKey() {
         return key;
     }
 
-    public void setKey(ConversationMessageKey key) {
+    public void setKey(MessageByConversationPrimaryKey key) {
         this.key = key;
     }
 
