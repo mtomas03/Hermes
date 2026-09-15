@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-deployment
+  namespace: hermes-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes-worker
+  template:
+    metadata:
+      labels:
+        app: hermes-worker
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-for-cassandra-schema
+          image: cassandra:4.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              until cqlsh hermes-cassandra 9042 -e
+              "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = 'hermes';"
+              2>/dev/null | grep -q hermes; do
+                echo "Waiting for Cassandra keyspace 'hermes'...";
+                sleep 5;
+              done
+      containers:
+        - name: worker
+          image: hermes/worker:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: hermes-configmap
+            - secretRef:
+                name: hermes-secrets
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

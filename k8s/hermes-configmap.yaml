@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-configmap
+  namespace: hermes-namespace
+data:
+  APP_ENV: production
+  REDIS_HOST: hermes-redis
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: hermes-postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_URL: "jdbc:postgresql://hermes-postgres:5432/hermes"
+  KAFKA_SERVERS: hermes-kafka:9092
+  CASSANDRA_HOST: hermes-cassandra
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_DC: datacenter1
+  KAFKA_TOPIC_CREATED: message-created
+  KAFKA_TOPIC_ACK: message-acknowledged
+  KAFKA_TOPIC_DELIVERY: message-delivery
+  LOCAL_TIMEZONE: Europe/Rome

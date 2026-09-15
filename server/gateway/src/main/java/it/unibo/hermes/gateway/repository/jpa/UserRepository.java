@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.repository;
+package it.unibo.hermes.gateway.repository.jpa;
 
 import it.unibo.hermes.gateway.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;

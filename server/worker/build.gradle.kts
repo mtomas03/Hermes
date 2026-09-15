@@ -1,7 +1,6 @@
 plugins {
     id("org.springframework.boot")
     id("io.spring.dependency-management")
-    id("com.gradleup.shadow")
 }
 
 group = "it.unibo.hermes.worker"
@@ -18,4 +17,12 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-cassandra")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+}
+
+tasks.bootJar {
+    archiveFileName.set("worker.jar")
+}
+
+tasks.named<Jar>("jar") {
+    enabled = false
 }

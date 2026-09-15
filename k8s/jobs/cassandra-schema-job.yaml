@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cassandra-schema
+  namespace: hermes-namespace
+spec:
+  backoffLimit: 10
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: cassandra-schema
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: schema-init
+          image: cassandra:4.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              until cqlsh hermes-cassandra 9042 -e
+              "SELECT release_version FROM system.local;"
+              >/dev/null 2>&1; do
+                echo "Waiting for Cassandra...";
+                sleep 5;
+              done;
+              cqlsh hermes-cassandra 9042 -f /schema/schema.cql;
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+              readOnly: true
+      volumes:
+        - name: schema
+          configMap:
+            name: cassandra-schema

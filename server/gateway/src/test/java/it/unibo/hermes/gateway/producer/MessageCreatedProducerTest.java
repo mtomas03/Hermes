@@ -23,10 +23,10 @@ class MessageCreatedProducerTest {
     private static final String CREATED_TOPIC = "message-created";
 
     @Mock
-    private KafkaTemplate<String, MessageEvent> kafkaTemplate;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Mock
-    private SendResult<String, MessageEvent> sendResult;
+    private SendResult<String, Object> sendResult;
 
     private MessageCreatedProducer producer;
 
@@ -43,10 +43,11 @@ class MessageCreatedProducerTest {
                 "alice", "bob", "hi",
                 1L
         );
-        CompletableFuture<SendResult<String, MessageEvent>> future =
+        CompletableFuture<SendResult<String, Object>> future =
                 CompletableFuture.completedFuture(sendResult);
 
-        when(kafkaTemplate.send(CREATED_TOPIC, "alice-bob", event)).thenReturn(future);
+        when(kafkaTemplate.send(CREATED_TOPIC, "alice-bob", event))
+                .thenReturn(future);
         producer.publish(event);
 
         verify(kafkaTemplate).send(CREATED_TOPIC, "alice-bob", event);
@@ -61,9 +62,11 @@ class MessageCreatedProducerTest {
                 1L
         );
 
-        CompletableFuture<SendResult<String, MessageEvent>> failedFuture = new CompletableFuture<>();
+        CompletableFuture<SendResult<String, Object>> failedFuture =
+                new CompletableFuture<>();
         failedFuture.completeExceptionally(new RuntimeException("Broker unreachable"));
-        when(kafkaTemplate.send(CREATED_TOPIC, "alice-bob", event)).thenReturn(failedFuture);
+        when(kafkaTemplate.send(CREATED_TOPIC, "alice-bob", event))
+                .thenReturn(failedFuture);
 
         assertThatThrownBy(() -> producer.publish(event))
                 .isInstanceOf(BackboneUnavailableException.class)
