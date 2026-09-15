@@ -3,7 +3,6 @@ plugins {
     jacoco
     id("org.springframework.boot") version "3.2.5" apply false
     id("io.spring.dependency-management") version "1.1.4" apply false
-    id("com.gradleup.shadow") version "8.3.6" apply false
 }
 
 allprojects {

@@ -1,7 +1,6 @@
 plugins {
     id("org.springframework.boot")
     id("io.spring.dependency-management")
-    id("com.gradleup.shadow")
 }
 
 group = "it.unibo.hermes.gateway"
@@ -17,7 +16,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
 
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql")
+    implementation("org.postgresql:postgresql")
     implementation("org.springframework.boot:spring-boot-starter-data-cassandra")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
 
@@ -28,4 +27,12 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.5")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+}
+
+tasks.bootJar {
+    archiveFileName.set("gateway.jar")
+}
+
+tasks.named<Jar>("jar") {
+    enabled = false
 }

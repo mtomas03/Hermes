@@ -1,6 +1,5 @@
 plugins {
     application
-    id("com.gradleup.shadow")
 }
 
 group = "it.unibo.hermes.client"
