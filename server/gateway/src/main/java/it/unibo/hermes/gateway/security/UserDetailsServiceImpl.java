@@ -1,7 +1,7 @@
 package it.unibo.hermes.gateway.security;
 
 import it.unibo.hermes.gateway.entity.User;
-import it.unibo.hermes.gateway.repository.UserRepository;
+import it.unibo.hermes.gateway.repository.jpa.UserRepository;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;

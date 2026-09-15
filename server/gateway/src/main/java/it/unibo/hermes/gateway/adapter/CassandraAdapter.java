@@ -2,8 +2,8 @@ package it.unibo.hermes.gateway.adapter;
 
 import it.unibo.hermes.gateway.entity.MessageByConversation;
 import it.unibo.hermes.gateway.entity.MessageById;
-import it.unibo.hermes.gateway.repository.MessageByConversationRepository;
-import it.unibo.hermes.gateway.repository.MessageByIdRepository;
+import it.unibo.hermes.gateway.repository.cassandra.MessageByConversationRepository;
+import it.unibo.hermes.gateway.repository.cassandra.MessageByIdRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

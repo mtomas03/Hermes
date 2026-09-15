@@ -1,4 +1,4 @@
-package it.unibo.hermes.worker.repository;
+package it.unibo.hermes.worker.repository.cassandra;
 
 import it.unibo.hermes.worker.entity.MessageById;
 import org.springframework.data.cassandra.repository.CassandraRepository;

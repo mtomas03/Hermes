@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.repository;
+package it.unibo.hermes.gateway.repository.cassandra;
 
 import it.unibo.hermes.gateway.entity.MessageByConversation;
 import it.unibo.hermes.gateway.entity.MessageByConversationPrimaryKey;
