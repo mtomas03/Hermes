@@ -19,11 +19,11 @@ public class MessageCreatedProducer {
     private static final Logger log = LoggerFactory.getLogger(MessageCreatedProducer.class);
     private static final long SEND_TIMEOUT_SECONDS = 3L;
 
-    private final KafkaTemplate<String, MessageEvent> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final String topic;
 
     public MessageCreatedProducer(
-            KafkaTemplate<String, MessageEvent> kafkaTemplate,
+            KafkaTemplate<String, Object> kafkaTemplate,
             @Value("${hermes.topics.message-created:message-created}") String topic) {
         this.kafkaTemplate = kafkaTemplate;
         this.topic = topic;

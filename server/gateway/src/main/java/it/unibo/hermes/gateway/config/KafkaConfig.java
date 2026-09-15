@@ -3,11 +3,13 @@ package it.unibo.hermes.gateway.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -24,6 +26,16 @@ public class KafkaConfig {
 
     @Value("${hermes.kafka.retry.initial-backoff-ms:1000}")
     private long retryBackoffMs;
+
+
+    /**
+     * Creates and configures the {@link ProducerFactory} for
+     * Kafka producers using Spring Boot properties.
+     */
+    @Bean
+    public ProducerFactory<String, Object> producerFactory(KafkaProperties properties) {
+        return new DefaultKafkaProducerFactory<>(properties.buildProducerProperties(null));
+    }
 
     /**
      * KafkaTemplate for Gateway producers.

@@ -23,7 +23,7 @@ class MessageAckProducerTest {
     private static final String ACK_TOPIC = "message-acknowledged";
 
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Mock
     private ObjectMapper objectMapper;
