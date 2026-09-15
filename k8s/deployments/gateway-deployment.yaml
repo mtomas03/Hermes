@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-deployment
+  namespace: hermes-namespace
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hermes-gateway
+  template:
+    metadata:
+      labels:
+        app: hermes-gateway
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-for-cassandra-schema
+          image: cassandra:4.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              until cqlsh hermes-cassandra 9042 -e
+              "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = 'hermes';"
+              2>/dev/null | grep -q hermes; do
+                echo "Waiting for Cassandra keyspace 'hermes'...";
+                sleep 5;
+              done
+      containers:
+        - name: gateway
+          image: hermes/gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: hermes-configmap
+            - secretRef:
+                name: hermes-secrets
+          env:
+            - name: SERVER_PORT
+              value: "8080"
+            - name: GATEWAY_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi

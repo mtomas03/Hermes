@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hermes-namespace
+
+resources:
+  - hermes-namespace.yaml
+  - hermes-secrets.yaml
+  - hermes-configmap.yaml
+  - services/postgres-service.yaml
+  - statefulsets/postgres-statefulset.yaml
+  - services/cassandra-service.yaml
+  - statefulsets/cassandra-statefulset.yaml
+  - jobs/cassandra-schema-job.yaml
+  - services/kafka-service.yaml
+  - statefulsets/kafka-statefulset.yaml
+  - services/redis-service.yaml
+  - deployments/redis-deployment.yaml
+  - services/gateway-service.yaml
+  - deployments/gateway-deployment.yaml
+  - deployments/worker-deployment.yaml
+  - ingresses/nginx-ingress.yaml
