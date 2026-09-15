@@ -14,11 +14,11 @@ import java.util.UUID;
 public interface MessageByIdRepository extends CassandraRepository<MessageById, UUID> {
 
     /**
-     * Updates the delivery status and updated_at timestamp for a specific message.
+     * Updates the delivery status for a specific message.
      *
      * @param deliveryStatus the new status to set
      * @param messageId      the target message ID
      */
-    @Query("UPDATE message_by_id SET delivery_status = ?0, updated_at = toTimestamp(now()) WHERE message_id = ?1")
+    @Query("UPDATE message_by_id SET delivery_status = ?0 WHERE message_id = ?1")
     void updateDeliveryStatus(String deliveryStatus, UUID messageId);
 }
