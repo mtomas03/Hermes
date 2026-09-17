@@ -2,11 +2,13 @@ package it.unibo.hermes.worker.adapter;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
-import it.unibo.hermes.worker.entity.MessageByConversation;
-import it.unibo.hermes.worker.entity.MessageByConversationPrimaryKey;
-import it.unibo.hermes.worker.entity.MessageById;
+import it.unibo.hermes.worker.entity.cassandra.ConversationByUser;
+import it.unibo.hermes.worker.entity.cassandra.MessageByConversation;
+import it.unibo.hermes.worker.entity.cassandra.MessageByConversationPrimaryKey;
+import it.unibo.hermes.worker.entity.cassandra.MessageById;
 import it.unibo.hermes.worker.event.MessageEvent;
 import it.unibo.hermes.worker.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.repository.cassandra.ConversationByUserRepository;
 import it.unibo.hermes.worker.repository.cassandra.MessageByConversationRepository;
 import it.unibo.hermes.worker.repository.cassandra.MessageByIdRepository;
 import org.slf4j.Logger;
@@ -18,22 +20,25 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Cassandra adapter managing double-writes across {@code message_by_id}
- * and {@code messages_by_conversation} tables.
+ * Cassandra adapter managing writes across {@code message_by_id},
+ * {@code messages_by_conversation}, and {@code conversations_by_user} tables.
  */
 @Component
-public class CassandraMessageAdapter {
+public class CassandraAdapter {
 
-    private static final Logger log = LoggerFactory.getLogger(CassandraMessageAdapter.class);
+    private static final Logger log = LoggerFactory.getLogger(CassandraAdapter.class);
 
     private final MessageByIdRepository messageByIdRepository;
     private final MessageByConversationRepository conversationMessageRepository;
+    private final ConversationByUserRepository conversationByUserRepository;
 
-    public CassandraMessageAdapter(
+    public CassandraAdapter(
             MessageByIdRepository messageByIdRepository,
-            MessageByConversationRepository messageByConversationRepository) {
+            MessageByConversationRepository messageByConversationRepository,
+            ConversationByUserRepository conversationByUserRepository) {
         this.messageByIdRepository = messageByIdRepository;
         this.conversationMessageRepository = messageByConversationRepository;
+        this.conversationByUserRepository = conversationByUserRepository;
     }
 
     @NonNull
@@ -54,7 +59,8 @@ public class CassandraMessageAdapter {
     }
 
     /**
-     * Persists a new message as PENDING across both Cassandra tables.
+     * Persists a new message as PENDING across Cassandra tables
+     * and updates conversation mappings for both participants.
      */
     public void persistMessage(MessageEvent event) {
         UUID messageId = UUID.fromString(event.messageId());
@@ -82,7 +88,22 @@ public class CassandraMessageAdapter {
             MessageByConversation byConversation = getByConversation(event, messageId, physicalTimestamp);
             conversationMessageRepository.save(byConversation);
 
-            log.debug("Message {} persisted as PENDING across both Cassandra repositories", messageId);
+            ConversationByUser senderIndex = new ConversationByUser(
+                    event.senderUsername(),
+                    event.conversationId(),
+                    event.recipientUsername()
+            );
+            conversationByUserRepository.save(senderIndex);
+
+            ConversationByUser recipientIndex = new ConversationByUser(
+                    event.recipientUsername(),
+                    event.conversationId(),
+                    event.senderUsername()
+            );
+            conversationByUserRepository.save(recipientIndex);
+
+            log.debug("Message {} persisted and conversation indexed for {} and {}",
+                    messageId, event.senderUsername(), event.recipientUsername());
 
         } catch (Exception e) {
             log.error("Failed to persist message {}: {}", messageId, e.getMessage());

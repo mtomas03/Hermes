@@ -1,6 +1,6 @@
 package it.unibo.hermes.worker.service;
 
-import it.unibo.hermes.worker.adapter.CassandraMessageAdapter;
+import it.unibo.hermes.worker.adapter.CassandraAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.event.MessageAckEvent;
 import org.slf4j.Logger;
@@ -15,9 +15,9 @@ public class AcknowledgementService {
 
     private static final Logger log = LoggerFactory.getLogger(AcknowledgementService.class);
 
-    private final CassandraMessageAdapter cassandraAdapter;
+    private final CassandraAdapter cassandraAdapter;
 
-    public AcknowledgementService(CassandraMessageAdapter cassandraAdapter) {
+    public AcknowledgementService(CassandraAdapter cassandraAdapter) {
         this.cassandraAdapter = cassandraAdapter;
     }
 
