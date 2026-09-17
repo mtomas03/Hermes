@@ -3,7 +3,7 @@ package it.unibo.hermes.gateway.websocket;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.gateway.dto.WsMessage;
-import it.unibo.hermes.gateway.dto.WsMessageType;
+import it.unibo.hermes.gateway.domain.WsMessageType;
 import it.unibo.hermes.gateway.event.MessageAckEvent;
 import it.unibo.hermes.gateway.event.MessageEvent;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;

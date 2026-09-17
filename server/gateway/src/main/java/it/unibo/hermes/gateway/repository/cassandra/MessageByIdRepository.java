@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.repository.cassandra;
 
-import it.unibo.hermes.gateway.entity.MessageById;
+import it.unibo.hermes.gateway.entity.cassandra.MessageById;
 import org.springframework.data.cassandra.repository.CassandraRepository;
 import org.springframework.stereotype.Repository;
 

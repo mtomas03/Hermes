@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.entity;
+package it.unibo.hermes.gateway.entity.cassandra;
 
 import it.unibo.hermes.gateway.domain.MessageStatus;
 import org.springframework.data.cassandra.core.mapping.Column;

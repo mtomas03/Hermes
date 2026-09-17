@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.repository.jpa;
 
-import it.unibo.hermes.gateway.entity.User;
+import it.unibo.hermes.gateway.entity.jpa.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

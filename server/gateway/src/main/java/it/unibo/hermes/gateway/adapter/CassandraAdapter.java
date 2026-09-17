@@ -1,7 +1,7 @@
 package it.unibo.hermes.gateway.adapter;
 
-import it.unibo.hermes.gateway.entity.MessageByConversation;
-import it.unibo.hermes.gateway.entity.MessageById;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
+import it.unibo.hermes.gateway.entity.cassandra.MessageById;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByConversationRepository;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByIdRepository;
 import org.slf4j.Logger;
