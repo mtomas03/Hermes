@@ -1,6 +1,6 @@
 package it.unibo.hermes.worker.service;
 
-import it.unibo.hermes.worker.adapter.CassandraMessageAdapter;
+import it.unibo.hermes.worker.adapter.CassandraAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.event.MessageAckEvent;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,13 +17,13 @@ import static org.mockito.Mockito.verify;
 class AcknowledgementServiceTest {
 
     @Mock
-    private CassandraMessageAdapter cassandraMessageAdapter;
+    private CassandraAdapter cassandraAdapter;
 
     private AcknowledgementService ackService;
 
     @BeforeEach
     void setUp() {
-        ackService = new AcknowledgementService(cassandraMessageAdapter);
+        ackService = new AcknowledgementService(cassandraAdapter);
     }
 
     @Test
@@ -38,6 +38,6 @@ class AcknowledgementServiceTest {
 
         ackService.processAcknowledgement(event);
 
-        verify(cassandraMessageAdapter).updateMessageDeliveryStatus(messageId, DeliveryStatus.ACKNOWLEDGED);
+        verify(cassandraAdapter).updateMessageDeliveryStatus(messageId, DeliveryStatus.ACKNOWLEDGED);
     }
 }

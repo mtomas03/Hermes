@@ -1,4 +1,4 @@
-package it.unibo.hermes.worker.entity;
+package it.unibo.hermes.worker.entity.cassandra;
 
 import org.springframework.data.cassandra.core.cql.Ordering;
 import org.springframework.data.cassandra.core.cql.PrimaryKeyType;

@@ -1,9 +1,10 @@
 package it.unibo.hermes.worker.adapter;
 
 import it.unibo.hermes.worker.domain.DeliveryStatus;
-import it.unibo.hermes.worker.entity.MessageById;
+import it.unibo.hermes.worker.entity.cassandra.MessageById;
 import it.unibo.hermes.worker.event.MessageEvent;
 import it.unibo.hermes.worker.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.repository.cassandra.ConversationByUserRepository;
 import it.unibo.hermes.worker.repository.cassandra.MessageByConversationRepository;
 import it.unibo.hermes.worker.repository.cassandra.MessageByIdRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,7 +23,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class CassandraMessageAdapterTest {
+class CassandraAdapterTest {
 
     @Mock
     private MessageByIdRepository messageByIdRepository;
@@ -30,12 +31,17 @@ class CassandraMessageAdapterTest {
     @Mock
     private MessageByConversationRepository messageByConversationRepository;
 
-    private CassandraMessageAdapter cassandraMessageAdapter;
+    @Mock
+    private ConversationByUserRepository conversationByUserRepository;
+
+    private CassandraAdapter cassandraAdapter;
 
     @BeforeEach
     void setUp() {
-        cassandraMessageAdapter = new CassandraMessageAdapter(
-                messageByIdRepository, messageByConversationRepository);
+        cassandraAdapter = new CassandraAdapter(
+                messageByIdRepository,
+                messageByConversationRepository,
+                conversationByUserRepository);
     }
 
     private MessageEvent createSampleEvent() {
@@ -47,13 +53,14 @@ class CassandraMessageAdapterTest {
     }
 
     @Test
-    void shouldInsertIntoBothTablesForNewMessage() {
+    void shouldInsertIntoAllTablesAndIndexBothParticipantsForNewMessage() {
         MessageEvent event = createSampleEvent();
         UUID messageId = UUID.fromString(event.messageId());
         when(messageByIdRepository.findById(messageId)).thenReturn(Optional.empty());
 
-        cassandraMessageAdapter.persistMessage(event);
+        cassandraAdapter.persistMessage(event);
 
+        // 1. Verifica salvataggio su message_by_id
         verify(messageByIdRepository).save(argThat(byId ->
                 byId.getMessageId().equals(messageId) &&
                         byId.getConversationId().equals(event.conversationId()) &&
@@ -63,6 +70,8 @@ class CassandraMessageAdapterTest {
                         byId.getLogicalTimestamp() == 1L &&
                         DeliveryStatus.PENDING.name().equals(byId.getDeliveryStatus())
         ));
+
+        // 2. Verifica salvataggio su messages_by_conversation
         verify(messageByConversationRepository).save(argThat(byConv ->
                 byConv.getKey().getConversationId().equals(event.conversationId()) &&
                         byConv.getKey().getLogicalTimestamp() == 1L &&
@@ -71,6 +80,20 @@ class CassandraMessageAdapterTest {
                         byConv.getRecipientUsername().equals("bob") &&
                         byConv.getContent().equals("hi") &&
                         DeliveryStatus.PENDING.name().equals(byConv.getDeliveryStatus())
+        ));
+
+        // 3. Verifica indicizzazione per il mittente (alice -> bob)
+        verify(conversationByUserRepository).save(argThat(index ->
+                index.getUsername().equals("alice") &&
+                        index.getConversationId().equals(event.conversationId()) &&
+                        index.getOtherParticipant().equals("bob")
+        ));
+
+        // 4. Verifica indicizzazione per il destinatario (bob -> alice)
+        verify(conversationByUserRepository).save(argThat(index ->
+                index.getUsername().equals("bob") &&
+                        index.getConversationId().equals(event.conversationId()) &&
+                        index.getOtherParticipant().equals("alice")
         ));
     }
 
@@ -84,10 +107,11 @@ class CassandraMessageAdapterTest {
                 1L, DeliveryStatus.PENDING.name());
         when(messageByIdRepository.findById(messageId)).thenReturn(Optional.of(existing));
 
-        cassandraMessageAdapter.persistMessage(event);
+        cassandraAdapter.persistMessage(event);
 
         verify(messageByIdRepository, never()).save(any());
         verifyNoInteractions(messageByConversationRepository);
+        verifyNoInteractions(conversationByUserRepository);
     }
 
     @Test
@@ -96,7 +120,7 @@ class CassandraMessageAdapterTest {
         when(messageByIdRepository.findById(any()))
                 .thenThrow(new RuntimeException("Cassandra connection error"));
 
-        assertThatThrownBy(() -> cassandraMessageAdapter.persistMessage(event))
+        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasMessageContaining("Cannot persist message " + event.messageId());
     }
@@ -106,7 +130,7 @@ class CassandraMessageAdapterTest {
         UUID id = UUID.randomUUID();
         when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
 
-        cassandraMessageAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
 
         verify(messageByIdRepository, never()).updateDeliveryStatus(any(), any());
         verifyNoInteractions(messageByConversationRepository);
@@ -119,7 +143,7 @@ class CassandraMessageAdapterTest {
                 id, "alice-bob", "alice", "bob", "hi",
                 1L, DeliveryStatus.PENDING.name())));
 
-        cassandraMessageAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
 
         verify(messageByIdRepository).updateDeliveryStatus(DeliveryStatus.STORED.name(), id);
         verify(messageByConversationRepository).updateDeliveryStatus(
@@ -137,7 +161,7 @@ class CassandraMessageAdapterTest {
                 id, "alice-bob", "alice", "bob", "hi",
                 1L, DeliveryStatus.DELIVERED.name())));
 
-        cassandraMessageAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
 
         verify(messageByIdRepository, never()).updateDeliveryStatus(any(), any());
         verifyNoInteractions(messageByConversationRepository);
@@ -153,7 +177,7 @@ class CassandraMessageAdapterTest {
         doThrow(new RuntimeException("Cassandra update timeout"))
                 .when(messageByIdRepository).updateDeliveryStatus(any(), any());
 
-        assertThatThrownBy(() -> cassandraMessageAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED))
+        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED))
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasMessageContaining("Cannot update status for message " + id);
     }
@@ -163,7 +187,7 @@ class CassandraMessageAdapterTest {
         UUID id = UUID.randomUUID();
         when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThat(cassandraMessageAdapter.isAlreadyProcessed(id.toString())).isFalse();
+        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isFalse();
     }
 
     @Test
@@ -173,7 +197,7 @@ class CassandraMessageAdapterTest {
                 id, "alice-bob", "alice", "bob", "hi",
                 1L, DeliveryStatus.PENDING.name())));
 
-        assertThat(cassandraMessageAdapter.isAlreadyProcessed(id.toString())).isFalse();
+        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isFalse();
     }
 
     @Test
@@ -184,6 +208,6 @@ class CassandraMessageAdapterTest {
                 1L, DeliveryStatus.STORED.name());
         when(messageByIdRepository.findById(id)).thenReturn(Optional.of(entity));
 
-        assertThat(cassandraMessageAdapter.isAlreadyProcessed(id.toString())).isTrue();
+        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isTrue();
     }
 }

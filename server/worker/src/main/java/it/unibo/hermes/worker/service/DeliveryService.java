@@ -1,6 +1,6 @@
 package it.unibo.hermes.worker.service;
 
-import it.unibo.hermes.worker.adapter.CassandraMessageAdapter;
+import it.unibo.hermes.worker.adapter.CassandraAdapter;
 import it.unibo.hermes.worker.adapter.RedisPresenceAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.domain.PresenceInfo;
@@ -20,12 +20,12 @@ public class DeliveryService {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveryService.class);
 
-    private final CassandraMessageAdapter cassandraAdapter;
+    private final CassandraAdapter cassandraAdapter;
     private final RedisPresenceAdapter presenceAdapter;
     private final MessageDeliveryProducer messageDeliveryProducer;
 
     public DeliveryService(
-            CassandraMessageAdapter cassandraAdapter,
+            CassandraAdapter cassandraAdapter,
             RedisPresenceAdapter presenceAdapter,
             MessageDeliveryProducer messageDeliveryProducer) {
         this.cassandraAdapter = cassandraAdapter;
