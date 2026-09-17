@@ -3,7 +3,7 @@ package it.unibo.hermes.gateway.service;
 import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.domain.MessageStatus;
 import it.unibo.hermes.gateway.dto.WsMessage;
-import it.unibo.hermes.gateway.entity.MessageByConversation;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
 import it.unibo.hermes.gateway.event.MessageEvent;
 import it.unibo.hermes.gateway.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;

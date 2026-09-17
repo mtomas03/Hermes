@@ -1,8 +1,8 @@
 package it.unibo.hermes.gateway.controller;
 
-import it.unibo.hermes.gateway.dto.AuthResponse;
-import it.unibo.hermes.gateway.dto.LoginRequest;
-import it.unibo.hermes.gateway.dto.RegisterRequest;
+import it.unibo.hermes.gateway.dto.AuthResponseDto;
+import it.unibo.hermes.gateway.dto.LoginRequestDto;
+import it.unibo.hermes.gateway.dto.RegisterRequestDto;
 import it.unibo.hermes.gateway.service.AuthService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +32,7 @@ class AuthControllerTest {
 
     @Test
     void registerShouldDelegateToServiceAndReturn201() {
-        RegisterRequest request = new RegisterRequest("alice", "password123");
+        RegisterRequestDto request = new RegisterRequestDto("alice", "password123");
 
         ResponseEntity<Void> response = controller.register(request);
 
@@ -42,7 +42,7 @@ class AuthControllerTest {
 
     @Test
     void registerShouldPropagateServiceException() {
-        RegisterRequest request = new RegisterRequest("alice", "password123");
+        RegisterRequestDto request = new RegisterRequestDto("alice", "password123");
         doThrow(new IllegalArgumentException("Username 'alice' is already taken"))
                 .when(authService).register(request);
 
@@ -52,11 +52,11 @@ class AuthControllerTest {
 
     @Test
     void loginShouldReturnAuthResponseOnSuccess() {
-        LoginRequest request = new LoginRequest("alice", "secret");
-        AuthResponse expected = new AuthResponse("jwt", "alice", 3_600_000L);
+        LoginRequestDto request = new LoginRequestDto("alice", "secret");
+        AuthResponseDto expected = new AuthResponseDto("jwt", "alice", 3_600_000L);
         when(authService.login(request)).thenReturn(expected);
 
-        ResponseEntity<AuthResponse> response = controller.login(request);
+        ResponseEntity<AuthResponseDto> response = controller.login(request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isEqualTo(expected);
@@ -64,7 +64,7 @@ class AuthControllerTest {
 
     @Test
     void loginShouldPropagateBadCredentialsException() {
-        LoginRequest request = new LoginRequest("alice", "wrong");
+        LoginRequestDto request = new LoginRequestDto("alice", "wrong");
         when(authService.login(request)).thenThrow(new BadCredentialsException("Invalid credentials"));
 
         assertThatThrownBy(() -> controller.login(request))

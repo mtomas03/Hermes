@@ -1,7 +1,7 @@
 package it.unibo.hermes.gateway.repository.cassandra;
 
-import it.unibo.hermes.gateway.entity.MessageByConversation;
-import it.unibo.hermes.gateway.entity.MessageByConversationPrimaryKey;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversationPrimaryKey;
 import org.springframework.data.cassandra.repository.CassandraRepository;
 import org.springframework.data.cassandra.repository.Query;
 import org.springframework.stereotype.Repository;

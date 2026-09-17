@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.dto;
+package it.unibo.hermes.gateway.domain;
 
 /**
  * List of all message types exchanged over the WebSocket channel.

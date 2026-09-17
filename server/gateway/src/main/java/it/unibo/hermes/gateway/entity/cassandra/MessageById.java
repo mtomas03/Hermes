@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.entity;
+package it.unibo.hermes.gateway.entity.cassandra;
 
 import org.springframework.data.cassandra.core.mapping.Column;
 import org.springframework.data.cassandra.core.mapping.PrimaryKey;

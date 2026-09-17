@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.service;
 
-import it.unibo.hermes.gateway.dto.AuthResponse;
-import it.unibo.hermes.gateway.dto.LoginRequest;
-import it.unibo.hermes.gateway.dto.RegisterRequest;
-import it.unibo.hermes.gateway.entity.User;
+import it.unibo.hermes.gateway.dto.AuthResponseDto;
+import it.unibo.hermes.gateway.dto.LoginRequestDto;
+import it.unibo.hermes.gateway.dto.RegisterRequestDto;
+import it.unibo.hermes.gateway.entity.jpa.User;
 import it.unibo.hermes.gateway.repository.jpa.UserRepository;
 import it.unibo.hermes.gateway.security.JwtProvider;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +43,7 @@ class AuthServiceTest {
         when(userRepository.existsByUsername("alice")).thenReturn(false);
         when(passwordEncoder.encode("secret123")).thenReturn("hashed-secret");
 
-        authService.register(new RegisterRequest("alice", "secret123"));
+        authService.register(new RegisterRequestDto("alice", "secret123"));
 
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(captor.capture());
@@ -56,7 +56,7 @@ class AuthServiceTest {
         when(userRepository.existsByUsername("alice")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.register(
-                new RegisterRequest("alice", "secret123")))
+                new RegisterRequestDto("alice", "secret123")))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(userRepository, never()).save(any());
     }
@@ -69,7 +69,7 @@ class AuthServiceTest {
         when(jwtProvider.generateToken("alice")).thenReturn("jwt-token");
         when(jwtProvider.getExpirationMs()).thenReturn(10_000L);
 
-        AuthResponse response = authService.login(new LoginRequest("alice", "secret123"));
+        AuthResponseDto response = authService.login(new LoginRequestDto("alice", "secret123"));
 
         assertThat(response.token()).isEqualTo("jwt-token");
         assertThat(response.username()).isEqualTo("alice");
@@ -80,7 +80,7 @@ class AuthServiceTest {
     void shouldRejectLoginForUnknownUser() {
         when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("ghost", "whatever")))
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("ghost", "whatever")))
                 .isInstanceOf(BadCredentialsException.class);
         verify(jwtProvider, never()).generateToken(any());
     }
@@ -91,7 +91,7 @@ class AuthServiceTest {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(stored));
         when(passwordEncoder.matches("wrong-password", "hashed-secret")).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "wrong-password")))
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "wrong-password")))
                 .isInstanceOf(BadCredentialsException.class);
         verify(jwtProvider, never()).generateToken(any());
     }

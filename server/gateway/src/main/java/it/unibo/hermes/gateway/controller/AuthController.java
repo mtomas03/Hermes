@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.controller;
 
 
-import it.unibo.hermes.gateway.dto.AuthResponse;
-import it.unibo.hermes.gateway.dto.LoginRequest;
-import it.unibo.hermes.gateway.dto.RegisterRequest;
+import it.unibo.hermes.gateway.dto.AuthResponseDto;
+import it.unibo.hermes.gateway.dto.LoginRequestDto;
+import it.unibo.hermes.gateway.dto.RegisterRequestDto;
 import it.unibo.hermes.gateway.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -38,7 +38,7 @@ public class AuthController {
      * @return a response entity with HTTP status 201 Created upon successful account creation
      */
     @PostMapping("/register")
-    public ResponseEntity<Void> register(@Valid @RequestBody RegisterRequest request) {
+    public ResponseEntity<Void> register(@Valid @RequestBody RegisterRequestDto request) {
         authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
@@ -50,8 +50,8 @@ public class AuthController {
      * @return a response entity containing the authentication response and token payload
      */
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-        AuthResponse response = authService.login(request);
+    public ResponseEntity<AuthResponseDto> login(@Valid @RequestBody LoginRequestDto request) {
+        AuthResponseDto response = authService.login(request);
         return ResponseEntity.ok(response);
     }
 }

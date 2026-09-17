@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.entity;
+package it.unibo.hermes.gateway.entity.jpa;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

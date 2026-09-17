@@ -1,9 +1,11 @@
 package it.unibo.hermes.gateway.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import it.unibo.hermes.gateway.domain.WsMessageType;
 
 /**
- * Data transfer object representing a WebSocket message exchanged between the client and the gateway.
+ * Data transfer object representing a WebSocket message
+ * exchanged between the client and the gateway.
  *
  * <p> Fields, that are not applicable to a specific message type, are omitted
  * during JSON serialization by excluding null values.
