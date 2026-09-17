@@ -26,3 +26,10 @@ CREATE TABLE IF NOT EXISTS messages_by_conversation
     delivery_status    TEXT,
     PRIMARY KEY ((conversation_id), logical_timestamp, message_id)
 ) WITH CLUSTERING ORDER BY (logical_timestamp DESC, message_id DESC);
+
+CREATE TABLE IF NOT EXISTS conversations_by_user (
+    username          TEXT,
+    conversation_id   TEXT,
+    other_participant TEXT,
+    PRIMARY KEY ((username), conversation_id)
+);
