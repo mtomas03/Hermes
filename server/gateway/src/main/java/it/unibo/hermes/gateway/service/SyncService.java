@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.service;
 
 import it.unibo.hermes.gateway.adapter.CassandraAdapter;
-import it.unibo.hermes.gateway.dto.SyncResponse;
-import it.unibo.hermes.gateway.dto.SyncResponse.MessageDto;
-import it.unibo.hermes.gateway.entity.MessageByConversation;
+import it.unibo.hermes.gateway.dto.SyncResponseDto;
+import it.unibo.hermes.gateway.dto.SyncResponseDto.MessageDto;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Service executing pull-based message synchronisation requests between conversational participants.
+ * Service executing full conversation synchronisation requests.
  */
 @Service
 public class SyncService {
@@ -31,25 +31,21 @@ public class SyncService {
     }
 
     /**
-     * Retrieves all missing messages within a conversation occurring after the specified logical timestamp.
+     * Retrieves the complete message history of a conversation.
      *
-     * @param requestingUser the authenticated username requesting synchronisation
-     * @param conversationId the conversation identifier
-     * @param afterLogicalTs the last known logical timestamp cursor held by the client, or -1 to fetch complete history
-     * @return a synchronisation response containing missing message data transfer objects
-     * @throws AccessDeniedException if the requesting user is not a participant in the specified conversation
+     * @param requestingUser    the user requesting the synchronisation
+     * @param conversationId    the ID of the conversation to synchronise
+     * @return the SyncResponseDto containing the full message history
      */
-    public SyncResponse syncMissing(String requestingUser,
-                                    String conversationId,
-                                    long afterLogicalTs) {
+    public SyncResponseDto syncConversation(String requestingUser,
+                                            String conversationId) {
 
         validateParticipant(requestingUser, conversationId);
 
-        List<MessageByConversation> messageByConversations = afterLogicalTs < 0
-                ? cassandraAdapter.findAllMessages(conversationId)
-                : cassandraAdapter.findMessageAfter(conversationId, afterLogicalTs);
+        List<MessageByConversation> messages =
+                cassandraAdapter.findAllMessages(conversationId);
 
-        List<MessageDto> dtos = messageByConversations.stream()
+        List<MessageDto> dtos = messages.stream()
                 .map(m -> new MessageDto(
                         m.getMessageId().toString(),
                         m.getConversationId(),
@@ -61,10 +57,10 @@ public class SyncService {
                 ))
                 .toList();
 
-        log.debug("Sync for user '{}' in '{}': {} messageByConversations returned (after ts={})",
-                requestingUser, conversationId, dtos.size(), afterLogicalTs);
+        log.debug("Full sync for user '{}' in '{}': {} messages returned",
+                requestingUser, conversationId, dtos.size());
 
-        return new SyncResponse(conversationId, dtos);
+        return new SyncResponseDto(conversationId, dtos);
     }
 
     /**

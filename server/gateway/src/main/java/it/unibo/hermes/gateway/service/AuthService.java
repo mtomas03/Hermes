@@ -1,9 +1,9 @@
 package it.unibo.hermes.gateway.service;
 
-import it.unibo.hermes.gateway.dto.AuthResponse;
-import it.unibo.hermes.gateway.dto.LoginRequest;
-import it.unibo.hermes.gateway.dto.RegisterRequest;
-import it.unibo.hermes.gateway.entity.User;
+import it.unibo.hermes.gateway.dto.AuthResponseDto;
+import it.unibo.hermes.gateway.dto.LoginRequestDto;
+import it.unibo.hermes.gateway.dto.RegisterRequestDto;
+import it.unibo.hermes.gateway.entity.jpa.User;
 import it.unibo.hermes.gateway.repository.jpa.UserRepository;
 import it.unibo.hermes.gateway.security.JwtProvider;
 import org.slf4j.Logger;
@@ -47,7 +47,7 @@ public class AuthService {
      * @throws IllegalArgumentException if the specified username is already registered
      */
     @Transactional
-    public void register(RegisterRequest request) {
+    public void register(RegisterRequestDto request) {
         if (userRepository.existsByUsername(request.username())) {
             throw new IllegalArgumentException(
                     "Username '" + request.username() + "' is already taken");
@@ -65,7 +65,7 @@ public class AuthService {
      * @throws BadCredentialsException if the user account does not exist or the password verification fails
      */
     @Transactional(readOnly = true)
-    public AuthResponse login(LoginRequest request) {
+    public AuthResponseDto login(LoginRequestDto request) {
         User user = userRepository.findByUsername(request.username())
                 .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
 
@@ -75,6 +75,6 @@ public class AuthService {
 
         String token = jwtProvider.generateToken(user.getUsername());
         log.info("User '{}' authenticated", user.getUsername());
-        return new AuthResponse(token, user.getUsername(), jwtProvider.getExpirationMs());
+        return new AuthResponseDto(token, user.getUsername(), jwtProvider.getExpirationMs());
     }
 }

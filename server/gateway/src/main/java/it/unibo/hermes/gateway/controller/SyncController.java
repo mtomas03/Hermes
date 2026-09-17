@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.controller;
 
-import it.unibo.hermes.gateway.dto.SyncResponse;
+import it.unibo.hermes.gateway.dto.SyncResponseDto;
 import it.unibo.hermes.gateway.service.SyncService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -8,7 +8,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * REST controller handling pull-based message synchronisation requests.
+ * REST controller for full conversation synchronisation.
  */
 @RestController
 @RequestMapping("/api/v1/sync")
@@ -26,21 +26,19 @@ public class SyncController {
     }
 
     /**
-     * Retrieves missed conversation messages for the authenticated user since the specified logical timestamp.
+     * Returns the complete message history of the requested conversation
+     * for the authenticated participant.
      *
-     * @param conversationId the unique canonical identifier for the conversation
-     * @param after          the last known logical timestamp held by the client, or -1 to retrieve complete conversation history
-     * @param user           the security details of the authenticated requesting participant
-     * @return a response entity containing the synchronisation payload with missing messages
+     * @param conversationId    the ID of the conversation to synchronise
+     * @param user              the authenticated user making the request
+     * @return a ResponseEntity containing the SyncResponseDto with the full message history
      */
     @GetMapping("/{conversationId}")
-    public ResponseEntity<SyncResponse> sync(
+    public ResponseEntity<SyncResponseDto> sync(
             @PathVariable String conversationId,
-            @RequestParam(name = "after", defaultValue = "-1") long after,
             @AuthenticationPrincipal UserDetails user) {
 
-        SyncResponse response = syncService.syncMissing(
-                user.getUsername(), conversationId, after);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(
+                syncService.syncConversation(user.getUsername(), conversationId));
     }
 }

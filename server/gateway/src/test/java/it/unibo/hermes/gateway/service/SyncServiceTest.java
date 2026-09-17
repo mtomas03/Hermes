@@ -2,8 +2,8 @@ package it.unibo.hermes.gateway.service;
 
 import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.domain.MessageStatus;
-import it.unibo.hermes.gateway.dto.SyncResponse;
-import it.unibo.hermes.gateway.entity.MessageByConversation;
+import it.unibo.hermes.gateway.dto.SyncResponseDto;
+import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,7 +17,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,41 +34,30 @@ class SyncServiceTest {
 
     @Test
     void shouldRejectSyncForNonParticipant() {
-        assertThatThrownBy(() -> syncService
-                .syncMissing("carol", "alice-bob", -1))
+        assertThatThrownBy(() -> syncService.syncConversation("carol", "alice-bob"))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageContaining("User 'carol' is not a participant");
 
         verify(cassandraAdapter, never()).findAllMessages(any());
-        verify(cassandraAdapter, never()).findMessageAfter(any(), anyLong());
     }
 
     @Test
-    void shouldFetchFullHistoryWhenCursorIsNegative() {
-        MessageByConversation msg = new MessageByConversation(
+    void shouldFetchFullHistoryForAuthorizedParticipant() {
+        MessageByConversation msg1 = new MessageByConversation(
                 UUID.randomUUID(), "alice-bob", "alice", "bob",
                 "Hello Bob!", 1L, MessageStatus.DELIVERED);
-        when(cassandraAdapter.findAllMessages("alice-bob"))
-                .thenReturn(List.of(msg));
+        MessageByConversation msg2 = new MessageByConversation(
+                UUID.randomUUID(), "alice-bob", "bob", "alice",
+                "Hi Alice!", 2L, MessageStatus.DELIVERED);
 
-        SyncResponse response = syncService.syncMissing("alice", "alice-bob", -1);
+        when(cassandraAdapter.findAllMessages("alice-bob"))
+                .thenReturn(List.of(msg1, msg2));
+
+        SyncResponseDto response = syncService.syncConversation("alice", "alice-bob");
 
         assertThat(response.conversationId()).isEqualTo("alice-bob");
-        assertThat(response.messages()).hasSize(1);
+        assertThat(response.messages()).hasSize(2);
         verify(cassandraAdapter).findAllMessages("alice-bob");
-        verify(cassandraAdapter, never()).findMessageAfter(any(), anyLong());
-    }
-
-    @Test
-    void shouldFetchOnlyMessagesAfterCursorWhenProvided() {
-        when(cassandraAdapter.findMessageAfter("alice-bob", 5L))
-                .thenReturn(List.of());
-
-        SyncResponse response = syncService.syncMissing("bob", "alice-bob", 5L);
-
-        assertThat(response.messages()).isEmpty();
-        verify(cassandraAdapter).findMessageAfter("alice-bob", 5L);
-        verify(cassandraAdapter, never()).findAllMessages(any());
     }
 
     @Test
@@ -80,18 +68,18 @@ class SyncServiceTest {
                 "alice-bob", "alice", "bob",
                 "hi", 2L, MessageStatus.STORED);
 
-        when(cassandraAdapter.findMessageAfter("alice-bob", 0L)).thenReturn(List.of(msg));
+        when(cassandraAdapter.findAllMessages("alice-bob")).thenReturn(List.of(msg));
 
-        SyncResponse response = syncService.syncMissing("alice", "alice-bob", 0L);
+        SyncResponseDto response = syncService.syncConversation("alice", "alice-bob");
 
         assertThat(response.messages()).hasSize(1);
-        SyncResponse.MessageDto dto = response.messages().getFirst();
+        SyncResponseDto.MessageDto dto = response.messages().getFirst();
         assertThat(dto.messageId()).isEqualTo(messageId.toString());
         assertThat(dto.conversationId()).isEqualTo("alice-bob");
         assertThat(dto.senderUsername()).isEqualTo("alice");
         assertThat(dto.recipientUsername()).isEqualTo("bob");
         assertThat(dto.content()).isEqualTo("hi");
         assertThat(dto.logicalTimestamp()).isEqualTo(2L);
-        assertThat(dto.status()).isEqualTo("STORED");
+        assertThat(dto.messageStatus()).isEqualTo("STORED");
     }
 }
