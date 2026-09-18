@@ -8,7 +8,8 @@ import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.service.LocalPersistenceService;
 import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.RestAuthService;
+import it.unibo.hermes.client.service.AuthService;
+import it.unibo.hermes.client.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -18,11 +19,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Handles all chat-related user actions:
- * selecting a conversation, sending a message, and starting a new conversation.
- *
- * <p> This controller is the only point of coordination between the chat GUI,
- * the messaging service, local persistence and the observable state model.
+ * Handles all chat-related user actions.
  */
 @Component
 public class ChatController {
@@ -32,27 +29,32 @@ public class ChatController {
     private final ClientStateModel stateModel;
     private final MessageService messageService;
     private final LocalPersistenceService persistence;
-    private final RestAuthService authService;
+    private final UserService userService;
+    private final SyncController syncController;
 
     public ChatController(ClientStateModel stateModel,
                           MessageService messageService,
                           LocalPersistenceService persistence,
-                          RestAuthService authService) {
+                          UserService userService,
+                          SyncController syncController) {
         this.stateModel = stateModel;
         this.messageService = messageService;
         this.persistence = persistence;
-        this.authService = authService;
+        this.userService = userService;
+        this.syncController = syncController;
     }
 
     /**
-     * Selects a conversation: updates the state model and loads local message history.
-     * Called when the user clicks a conversation in the sidebar.
+     * Selects a conversation, immediately loading local history and then
+     * starting a full sync if this conversation has not been synchronised yet.
      */
     public void selectConversation(Conversation conv) {
         stateModel.setSelectedConversation(conv);
         List<Message> msgs = persistence.loadMessages(conv.conversationId());
         stateModel.replaceMessages(msgs);
         log.debug("Selected {} - {} local messages", conv.conversationId(), msgs.size());
+
+        syncController.syncConversationIfNeeded(conv.conversationId());
     }
 
     /**
@@ -99,7 +101,7 @@ public class ChatController {
         AuthToken token = stateModel.getAuthToken();
         User self = stateModel.getCurrentUser();
 
-        if (token == null || token.isValid()) {
+        if (token == null || !token.isValid()) {
             onError.accept("Not authenticated.");
             return;
         }
@@ -108,7 +110,7 @@ public class ChatController {
             return;
         }
 
-        authService.searchUser(username, token.bearerHeader())
+        userService.searchUser(username, token.bearerHeader())
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
                         dto -> openOrCreate(dto, self),

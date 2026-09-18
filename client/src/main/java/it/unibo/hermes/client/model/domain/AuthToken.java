@@ -16,7 +16,9 @@ public record AuthToken(String rawToken, Instant expiresAt) {
      * Returns true if the token has not yet expired.
      */
     public boolean isValid() {
-        return expiresAt != null && Instant.now().isBefore(expiresAt);
+        return rawToken != null
+                && expiresAt != null
+                && Instant.now().isBefore(expiresAt);
     }
 
     public String bearerHeader() {

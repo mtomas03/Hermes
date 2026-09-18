@@ -24,7 +24,7 @@ public class AppProperties {
     @Value("${hermes.api.conversations:/api/v1/conversations}")
     private String conversationsPath;
 
-    @Value("${hermes.api.messages.sync:/api/v1/messages/sync}")
+    @Value("${hermes.api.messages.sync:/api/v1/sync}")
     private String syncPath;
 
     @Value("${hermes.api.users.search:/api/v1/users/search}")

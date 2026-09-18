@@ -14,7 +14,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Handles the lifecycle of a single message.
+ * Service responsible for sending and receiving messages, managing Lamport clocks,
+ * and persisting messages to local storage.
  */
 @Service
 public class MessageService {
@@ -22,16 +23,22 @@ public class MessageService {
     private static final Logger log = LoggerFactory.getLogger(MessageService.class);
 
     private final WebSocketService wsService;
-    private final LocalPersistenceService persistence;
+    private final LocalPersistenceService persistenceService;
     private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
 
-    public MessageService(WebSocketService wsService, LocalPersistenceService persistence) {
+    public MessageService(WebSocketService wsService, LocalPersistenceService persistenceService) {
         this.wsService = wsService;
-        this.persistence = persistence;
+        this.persistenceService = persistenceService;
     }
 
     /**
      * Sends a message to {@code recipientUsername} in {@code conversationId}.
+     *
+     * @param senderUsername        the username of the sender (local user)
+     * @param conversationId        the unique identifier of the conversation
+     * @param recipientUsername     the username of the recipient
+     * @param content               the content of the message
+     * @return the message with status updated to SENT, if successfully sent
      */
     public Message send(String senderUsername,
                         String conversationId,
@@ -50,7 +57,7 @@ public class MessageService {
                 currentClock,
                 MessageStatus.PENDING);
 
-        persistence.saveMessage(local);
+        persistenceService.saveMessage(local);
         log.debug("Saved outbound message locally: {}", messageId);
 
         OutboundMessageDto dto = new OutboundMessageDto(
@@ -60,7 +67,7 @@ public class MessageService {
 
         boolean sent = wsService.sendMessage(dto);
         if (sent) {
-            persistence.updateMessageStatus(messageId, MessageStatus.SENT);
+            persistenceService.updateMessageStatus(messageId, MessageStatus.SENT);
             local.setStatus(MessageStatus.SENT);
             log.info("Message submitted via WebSocket: {}", messageId);
         } else {
@@ -72,6 +79,9 @@ public class MessageService {
     /**
      * Converts an inbound DTO received from the server into a domain Message
      * and persists it (idempotent – safe during reconnect replays).
+     *
+     * @param dto   the inbound message DTO
+     * @return the persisted Message entity
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
         AtomicLong clock = getConversationClock(dto.conversationId());
@@ -87,14 +97,26 @@ public class MessageService {
                 dto.logicalTimestamp(),
                 MessageStatus.SENT);
 
-        persistence.saveMessage(msg);
+        persistenceService.saveMessage(msg);
         return msg;
     }
 
+    /**
+     * Acknowledges the delivery of a message by updating its status to SENT.
+     *
+     * @param messageId the unique identifier of the message to acknowledge
+     */
     public void acknowledgeDelivery(String messageId) {
-        persistence.updateMessageStatus(messageId, MessageStatus.SENT);
+        persistenceService.updateMessageStatus(messageId, MessageStatus.SENT);
     }
 
+    /**
+     * Synchronises the Lamport clock for a conversation
+     * with the maximum clock value from the server.
+     *
+     * @param conversationId    the unique identifier of the conversation
+     * @param remoteMaxClock    the maximum clock value from the server
+     */
     public void syncConversationClock(String conversationId, long remoteMaxClock) {
         getConversationClock(conversationId)
                 .updateAndGet(current -> Math.max(current, remoteMaxClock));
@@ -102,7 +124,7 @@ public class MessageService {
 
     private AtomicLong getConversationClock(String conversationId) {
         return lamportClocks.computeIfAbsent(conversationId, cid -> {
-            long lastKnownClock = persistence.getLastLogicalTimestamp(cid);
+            long lastKnownClock = persistenceService.getLastLogicalTimestamp(cid);
             return new AtomicLong(lastKnownClock);
         });
     }

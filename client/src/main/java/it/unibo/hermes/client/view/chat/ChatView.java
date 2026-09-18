@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.view;
+package it.unibo.hermes.client.view.chat;
 
 import it.unibo.hermes.client.controller.AuthController;
 import it.unibo.hermes.client.controller.ChatController;

@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.infrastructure.persistance;
+package it.unibo.hermes.client.repository;
 
 import it.unibo.hermes.client.model.domain.User;
 import org.slf4j.Logger;

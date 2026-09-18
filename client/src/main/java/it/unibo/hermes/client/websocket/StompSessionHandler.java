@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.infrastructure.websocket;
+package it.unibo.hermes.client.websocket;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;

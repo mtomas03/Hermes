@@ -2,7 +2,7 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.view.ChatView;
+import it.unibo.hermes.client.view.chat.ChatView;
 import it.unibo.hermes.client.view.auth.LoginView;
 import it.unibo.hermes.client.view.auth.RegisterView;
 import jakarta.annotation.PostConstruct;

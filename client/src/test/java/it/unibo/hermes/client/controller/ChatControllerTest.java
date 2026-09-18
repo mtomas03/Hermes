@@ -1,22 +1,29 @@
 package it.unibo.hermes.client.controller;
 
+import it.unibo.hermes.client.dto.UserDto;
 import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.service.LocalPersistenceService;
 import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.RestAuthService;
+import it.unibo.hermes.client.service.AuthService;
+import it.unibo.hermes.client.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,22 +36,26 @@ class ChatControllerTest {
     @Mock
     private LocalPersistenceService persistence;
     @Mock
-    private RestAuthService authService;
+    private UserService userService;
     @Mock
     private Consumer<String> onError;
+    @Mock
+    private SyncController syncController;
 
     private ChatController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new ChatController(stateModel, messageService, persistence, authService);
+        controller = new ChatController(
+                stateModel, messageService, persistence, userService, syncController);
     }
 
     @Test
-    void selectingAConversationShouldLoadItsLocalHistoryIntoState() {
+    void selectingAConversationShouldLoadItsLocalHistoryIntoStateAndTriggerSync() {
         Conversation conv = new Conversation("alice-bob", new User("bob"));
+        String messageId = UUID.randomUUID().toString();
         Message msg = new Message(
-                "m1", "alice-bob", "bob", "alice",
+                messageId, "alice-bob", "bob", "alice",
                 "hi", 1L, MessageStatus.SENT);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(msg));
 
@@ -52,6 +63,7 @@ class ChatControllerTest {
 
         verify(stateModel).setSelectedConversation(conv);
         verify(stateModel).replaceMessages(List.of(msg));
+        verify(syncController).syncConversationIfNeeded("alice-bob");
     }
 
     @Test
@@ -91,8 +103,9 @@ class ChatControllerTest {
     @Test
     void sendingValidMessageShouldDelegateToMessageServiceAndAppendOptimistically() {
         Conversation conv = new Conversation("alice-bob", new User("bob"));
+        String messageId = UUID.randomUUID().toString();
         Message sent = new Message(
-                "m1", "alice-bob", "alice", "bob",
+                messageId, "alice-bob", "alice", "bob",
                 "hello", 1L, MessageStatus.SENT);
         when(stateModel.getSelectedConversation()).thenReturn(conv);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
@@ -108,15 +121,14 @@ class ChatControllerTest {
 
     @Test
     void startingConversationWithSelfShouldBeRejected() {
-        AuthToken expiredToken =
-                new AuthToken("t", Instant.now().minusSeconds(60));
-        when(stateModel.getAuthToken()).thenReturn(expiredToken);
+        AuthToken validToken = new AuthToken("jwt-token", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
 
         controller.startConversationWith("ALICE", onError);
 
         verify(onError).accept("Cannot start a conversation with yourself.");
-        verifyNoInteractions(authService);
+        verifyNoInteractions(userService);
     }
 
     @Test
@@ -126,26 +138,25 @@ class ChatControllerTest {
         controller.startConversationWith("bob", onError);
 
         verify(onError).accept("Not authenticated.");
-        verifyNoInteractions(authService);
+        verifyNoInteractions(userService);
     }
 
     @Test
     void startingConversationWithNewUserShouldCreateAndSelectIt() {
-        AuthToken expiredToken =
-                new AuthToken("t", Instant.now().minusSeconds(60));
-        when(stateModel.getAuthToken()).thenReturn(expiredToken);
+        AuthToken validToken = new AuthToken("jwt-token", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
-        when(authService.searchUser(eq("bob"), anyString()))
-                .thenReturn(reactor.core.publisher.Mono.just(new it.unibo.hermes.client.dto.UserDto("bob")));
-        when(persistence.findConversation(anyString())).thenReturn(java.util.Optional.empty());
-        when(stateModel.getConversations()).thenReturn(new java.util.ArrayList<>());
+        when(userService.searchUser(eq("bob"), anyString()))
+                .thenReturn(Mono.just(new UserDto("bob")));
+        when(persistence.findConversation(anyString())).thenReturn(Optional.empty());
+        when(stateModel.getConversations()).thenReturn(new ArrayList<>());
         when(persistence.loadMessages(anyString())).thenReturn(List.of());
 
         controller.startConversationWith("bob", onError);
 
-        // The search runs on a background scheduler
         verify(persistence, timeout(2000)).saveConversation(any(Conversation.class));
         verify(stateModel, timeout(2000)).setSelectedConversation(any(Conversation.class));
+        verify(syncController, timeout(2000)).syncConversationIfNeeded(anyString());
         verifyNoInteractions(onError);
     }
 }
