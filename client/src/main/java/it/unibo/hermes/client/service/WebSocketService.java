@@ -4,7 +4,7 @@ import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.OutboundMessageDto;
-import it.unibo.hermes.client.infrastructure.websocket.StompSessionHandler;
+import it.unibo.hermes.client.websocket.StompSessionHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.stomp.StompHeaders;

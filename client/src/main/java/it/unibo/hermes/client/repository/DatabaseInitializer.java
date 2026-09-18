@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.infrastructure.persistance;
+package it.unibo.hermes.client.repository;
 
 import it.unibo.hermes.client.config.AppProperties;
 import jakarta.annotation.PostConstruct;
@@ -74,13 +74,6 @@ public class DatabaseInitializer {
             stmt.execute("""
                     CREATE INDEX IF NOT EXISTS idx_message_conv_logical
                         ON message(conversation_id, logical_timestamp)""");
-
-            stmt.execute("""
-                    CREATE TABLE IF NOT EXISTS sync_cursor (
-                        conversation_id        TEXT PRIMARY KEY,
-                        last_synced_message_id TEXT,
-                        last_synced_at_epoch   INTEGER NOT NULL DEFAULT 0
-                    )""");
 
             conn.commit();
             log.info("Database schema initialised");

@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.infrastructure.persistance;
+package it.unibo.hermes.client.repository;
 
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
