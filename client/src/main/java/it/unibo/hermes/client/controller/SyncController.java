@@ -9,19 +9,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
- * Manages the full synchronisation cycle after login or reconnection:
- * <ol>
- *   <li>Fetch conversation list from the server.
- *   <li>Persist/merge conversations locally.
- *   <li>Expose conversations to the UI via {@link ClientStateModel}.
- *   <li>For each conversation, pull messages newer than the last local cursor.
- *   <li>Persist new messages; update active message list if that conversation is open.
- * </ol>
+ * Controller responsible for managing the synchronisation of conversations
+ * and messages between the client and the server.
  */
 @Component
 public class SyncController {
@@ -31,6 +29,9 @@ public class SyncController {
     private final SyncService syncService;
     private final LocalPersistenceService persistence;
     private final ClientStateModel stateModel;
+    private final ConcurrentMap<String, Mono<SyncResult>> syncsInProgress =
+            new ConcurrentHashMap<>();
+    private final Set<String> syncedConversations = ConcurrentHashMap.newKeySet();
 
     public SyncController(SyncService syncService,
                           LocalPersistenceService persistence,
@@ -41,15 +42,16 @@ public class SyncController {
     }
 
     /**
-     * Entry point called after WebSocket connection is established.
+     * Initiates a full synchronisation of all conversations and their messages.
      */
     public void syncAll() {
         AuthToken token = stateModel.getAuthToken();
-        if (token == null || token.isValid()) {
+        if (token == null || !token.isValid()) {
             log.warn("Skipping sync - no valid auth token");
             return;
         }
-        log.info("Starting full sync");
+
+        log.info("Starting full synchronisation");
         stateModel.setSyncing(true);
         stateModel.setStatusMessage("Synchronising...");
 
@@ -65,55 +67,115 @@ public class SyncController {
     }
 
     /**
-     * Reloads messages for the given conversation from SQLite into the observable list.
+     * Synchronises a specific conversation if it has not already been synchronised
+     * in the current session. If the conversation is already synced, this method
+     * will not perform any action.
+     *
+     * @param conversationId    the unique identifier of the conversation to synchronise
+     */
+    public void syncConversationIfNeeded(String conversationId) {
+        AuthToken token = stateModel.getAuthToken();
+        if (token == null || !token.isValid()) {
+            log.warn("Skipping conversation sync - no valid auth token");
+            return;
+        }
+
+        if (syncedConversations.contains(conversationId)) {
+            log.debug("Conversation {} already synced in this session", conversationId);
+            return;
+        }
+
+        startConversationSync(conversationId, token)
+                .subscribe(
+                        result -> {
+                            Conversation selected = stateModel.getSelectedConversation();
+                            if (selected != null && conversationId.equals(selected.conversationId())) {
+                                refreshActiveMessages(conversationId);
+                            }
+                        },
+                        err -> log.warn("Conversation sync failed for {}: {}", conversationId, err.getMessage()));
+    }
+
+    /**
+     * Refreshes the active messages for a given conversation by reloading them from
+     * the local persistence layer and updating the client state model.
+     *
+     * @param conversationId    the unique identifier of the conversation whose messages are to be refreshed
      */
     public void refreshActiveMessages(String conversationId) {
         List<Message> messages = persistence.loadMessages(conversationId);
         stateModel.replaceMessages(messages);
     }
 
-    private void processConversations(List<ConversationDto> dtos, AuthToken token) {
-        // 1. Persist / merge conversations into SQLite
-        for (ConversationDto dto : dtos) {
-            User user = new User(dto.participantUsername());
-            Conversation conv = new Conversation(dto.conversationId(), user);
-            persistence.saveConversation(conv);
+    /**
+     * Resets the synchronisation state, clearing the set of synced conversations
+     * and the in-progress sync operations.
+     */
+    public void resetSyncState() {
+        syncedConversations.clear();
+        syncsInProgress.clear();
+    }
+
+    private void processConversations(List<ConversationDto> conversationDtos, AuthToken token) {
+        for (ConversationDto dto : conversationDtos) {
+            User user = new User(dto.otherParticipantUsername());
+            Conversation conversation = new Conversation(dto.conversationId(), user);
+            persistence.saveConversation(conversation);
         }
 
-        // 2. Reload from SQLite and push to UI (thread-safe via setConversations)
-        List<Conversation> local = persistence.loadAllConversations();
-        stateModel.setConversations(local);
-        log.info("Conversations loaded into UI: {}", local.size());
+        stateModel.setConversations(persistence.loadAllConversations());
 
-        // 3. Incremental message sync for each conversation
-        Flux.fromIterable(dtos)
-                .flatMap(dto -> {
-                    String afterId = persistence.loadCursor(dto.conversationId())
-                            .map(SyncCursor::getLastSyncedMessageId)
-                            .orElse(null);
-                    return syncService.syncConversation(
-                                    dto.conversationId(), afterId, token.bearerHeader())
-                            .onErrorResume(e -> {
-                                log.warn("Sync skipped for {}: {}", dto.conversationId(), e.getMessage());
-                                return reactor.core.publisher.Mono.empty();
-                            });
-                })
-                .subscribeOn(Schedulers.boundedElastic())
+        Conversation selected = stateModel.getSelectedConversation();
+        String selectedId = selected != null ? selected.conversationId() : null;
+
+        Flux<ConversationDto> ordered = Flux.fromIterable(conversationDtos);
+
+        if (selectedId != null) {
+            ordered = Flux.concat(
+                    Flux.fromIterable(conversationDtos)
+                            .filter(dto -> selectedId.equals(dto.conversationId()))
+                            .take(1),
+                    Flux.fromIterable(conversationDtos)
+                            .filter(dto -> !selectedId.equals(dto.conversationId()))
+            );
+        }
+
+        ordered
+                .flatMap(dto -> startConversationSync(dto.conversationId(), token)
+                                .onErrorResume(err -> Mono.empty()),
+                        4)
                 .subscribe(
-                        response -> {
-                            syncService.applySync(response);
-                            // If this conversation is currently open, refresh the message list
-                            Conversation selected = stateModel.getSelectedConversation();
-                            if (selected != null &&
-                                    selected.conversationId().equals(response.conversationId())) {
-                                refreshActiveMessages(response.conversationId());
+                        result -> {
+                            if (selectedId != null && selectedId.equals(result.conversationId())) {
+                                refreshActiveMessages(result.conversationId());
                             }
                         },
                         err -> log.warn("Partial sync error: {}", err.getMessage()),
                         () -> {
-                            log.info("Full sync complete");
+                            log.info("Conversation synchronization complete");
                             stateModel.setSyncing(false);
                             stateModel.setStatusMessage("Online");
                         });
     }
+
+    private Mono<SyncResult> startConversationSync(String conversationId, AuthToken token) {
+        return syncsInProgress.computeIfAbsent(
+                conversationId,
+                id -> syncService
+                        .syncConversation(id, token.bearerHeader())
+                        .map(response -> {
+                            syncService.applySync(response);
+                            return new SyncResult(id, response.messages().size());
+                        })
+                        .doOnSuccess(result -> {
+                            syncedConversations.add(id);
+                            log.info("Conversation {} synchronized: {} messages", result.conversationId(), result.messageCount());
+                        })
+                        .doOnError(err -> log.warn("Sync failed for {}: {}", id, err.getMessage()))
+                        .doFinally(signal -> syncsInProgress.remove(id))
+                        .cache()
+        );
+    }
+
+    private record SyncResult(String conversationId, int messageCount) {}
 }

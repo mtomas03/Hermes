@@ -15,9 +15,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 /**
- * Pulls conversation list and missing messages from the backend.
- * Uses cursor-based incremental sync: only messages after the last
- * locally-known message ID are requested.
+ * Service responsible for synchronising conversations and messages with the server.
  */
 @Service
 public class SyncService {
@@ -41,6 +39,9 @@ public class SyncService {
 
     /**
      * Fetches all conversations for the authenticated user.
+     *
+     * @param bearerToken       the JWT bearer token for authentication
+     * @return a Mono emitting the list of conversations, or an error if the request fails
      */
     public Mono<List<ConversationDto>> fetchConversations(String bearerToken) {
         return webClient.get()
@@ -55,34 +56,35 @@ public class SyncService {
     }
 
     /**
-     * Performs incremental sync for a single conversation.
-     * Passes the last-known message ID so the server returns only newer messages.
+     * Fetches the complete history of one conversation.
+     *
+     * @param conversationId    the unique identifier of the conversation to synchronise
+     * @param bearerToken       the JWT bearer token for authentication
+     * @return a Mono emitting the synchronisation response containing messages,
+     *         or an error if the request fails
      */
-    public Mono<SyncResponseDto> syncConversation(String conversationId,
-                                                  String afterMessageId,
-                                                  String bearerToken) {
-        String uri = props.getSyncPath()
-                + "?conversationId=" + conversationId
-                + (afterMessageId != null ? "&afterMessageId=" + afterMessageId : "");
-
+    public Mono<SyncResponseDto> syncConversation(String conversationId, String bearerToken) {
         return webClient.get()
-                .uri(uri)
+                .uri(uriBuilder -> uriBuilder
+                        .path(props.getSyncPath())
+                        .pathSegment(conversationId)
+                        .build())
                 .header("Authorization", bearerToken)
                 .accept(MediaType.APPLICATION_JSON)
                 .retrieve()
                 .bodyToMono(SyncResponseDto.class)
-                .doOnSuccess(r -> log.info("Sync conversation {} - {} new messages",
-                        conversationId, r.messages().size()))
+                .doOnSuccess(response -> log.info("Full sync for {} - {} messages",
+                        conversationId, response.messages().size()))
                 .doOnError(e -> log.warn("Sync error for {}: {}", conversationId, e.getMessage()));
     }
 
     /**
-     * Persists synced messages and advances the cursor.
-     * Safe to call multiple times (insertIfAbsent prevents duplication).
+     * Merges the synchronisation response with the local database,
+     * saving any new messages and updating the Lamport clock.
+     *
+     * @param response      the synchronisation response containing messages to merge
      */
     public void applySync(SyncResponseDto response) {
-        long maxSyncClock = 0L;
-
         for (var dto : response.messages()) {
             Message msg = new Message(
                     dto.messageId(),
@@ -90,27 +92,16 @@ public class SyncService {
                     dto.senderUsername(),
                     dto.recipientUsername(),
                     dto.content(),
-                    dto.logicalTimestamp(),
+                    dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L,
                     MessageStatus.SENT);
 
             persistence.saveMessage(msg);
 
-            if (dto.logicalTimestamp() != null && dto.logicalTimestamp() > maxSyncClock) {
-                maxSyncClock = dto.logicalTimestamp();
+            if (dto.logicalTimestamp() != null) {
+                messageService.syncConversationClock(
+                        response.conversationId(),
+                        dto.logicalTimestamp());
             }
         }
-
-        if (maxSyncClock > 0) {
-            messageService.syncConversationClock(response.conversationId(), maxSyncClock);
-        }
-
-        /* TODO: Uncomment when cursor persistence is fixed
-        if (response.cursorMessageId() != null) {
-            SyncCursor cursor = new SyncCursor(
-                    response.conversationId(),
-                    response.cursorMessageId(),
-                    Instant.now());
-            persistence.saveCursor(cursor);
-        } */
     }
 }

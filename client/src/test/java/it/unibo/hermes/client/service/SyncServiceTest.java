@@ -56,7 +56,7 @@ class SyncServiceTest {
     }
 
     @Test
-    void applySyncWithNoMessagesShouldNotTouchPersistenceMessages() {
+    void applySyncWithNoMessagesShouldNotTouchPersistenceOrClock() {
         SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
@@ -83,22 +83,9 @@ class SyncServiceTest {
         verify(persistence, times(2)).saveMessage(captor.capture());
         assertEquals("m1", captor.getAllValues().get(0).getMessageId());
         assertEquals("m2", captor.getAllValues().get(1).getMessageId());
-
+        verify(messageService).syncConversationClock("alice-bob", 5L);
         verify(messageService).syncConversationClock("alice-bob", 8L);
     }
-
-    /*@Test
-    void applySyncShouldSaveCursorWhenCursorMessageIdIsPresent() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
-        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
-
-        service.applySync(response);
-
-        ArgumentCaptor<SyncCursor> captor = ArgumentCaptor.forClass(SyncCursor.class);
-        verify(persistence).saveCursor(captor.capture());
-        assertEquals("alice-bob", captor.getValue().getConversationId());
-        assertEquals("m2", captor.getValue().getLastSyncedMessageId());
-    }*/
 
     @Test
     void fetchConversationsShouldReturnListFromServer() throws Exception {
@@ -117,7 +104,7 @@ class SyncServiceTest {
         WebClient client = stubClient(mapper.writeValueAsString(dto));
         SyncService service = new SyncService(client, props, persistence, messageService);
 
-        StepVerifier.create(service.syncConversation("alice-bob", null, "Bearer t"))
+        StepVerifier.create(service.syncConversation("alice-bob", "Bearer t"))
                 .assertNext(resp -> assertEquals("alice-bob", resp.conversationId()))
                 .verifyComplete();
     }
