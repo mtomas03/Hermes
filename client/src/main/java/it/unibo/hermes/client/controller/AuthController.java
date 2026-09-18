@@ -1,34 +1,36 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.LoginResponseDto;
+import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
+import it.unibo.hermes.client.service.AuthService;
 import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.RestAuthService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Instant;
 import java.util.function.Consumer;
 
 /**
- * Coordinates registration and login flows.
+ * Handles user authentication: login, registration, logout
+ * and session management.
  */
 @Component
 public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
-    private final RestAuthService authService;
+    private final AuthService authService;
     private final ClientStateModel stateModel;
     private final LocalPersistenceService persistence;
     private final ConnectionController connectionController;
     private final SyncController syncController;
 
-    public AuthController(RestAuthService authService,
+    public AuthController(AuthService authService,
                           ClientStateModel stateModel,
                           LocalPersistenceService persistence,
                           ConnectionController connectionController,
@@ -41,7 +43,11 @@ public class AuthController {
     }
 
     /**
-     * Initiates login.
+     * Attempts to log in with the provided credentials.
+     *
+     * @param username the username to log in with
+     * @param password the password to log in with
+     * @param onError  callback invoked with a user-friendly error message if login fails
      */
     public void login(String username, String password, Consumer<String> onError) {
         stateModel.setAuthState(AuthState.AUTHENTICATING);
@@ -60,7 +66,12 @@ public class AuthController {
     }
 
     /**
-     * Initiates registration.
+     * Attempts to register a new account with the provided credentials.
+     *
+     * @param username the desired username
+     * @param password the desired password
+     * @param onSuccess callback invoked if registration succeeds
+     * @param onError callback invoked with a user-friendly error message if registration fails
      */
     public void register(String username, String password,
                          Runnable onSuccess, Consumer<String> onError) {
@@ -87,10 +98,12 @@ public class AuthController {
         connectionController.disconnect();
         persistence.clearLocalUser();
         stateModel.clearSession();
+        syncController.resetSyncState();
     }
 
-    private void handleLoginSuccess(LoginResponseDto resp) {
-        AuthToken token = new AuthToken(resp.token(), resp.expiresAt());
+    private void handleLoginSuccess(AuthResponseDto resp) {
+        Instant expiresAt = Instant.now().plusMillis(resp.expiresInMs());
+        AuthToken token = new AuthToken(resp.token(), expiresAt);
         User user = new User(resp.username());
 
         stateModel.setAuthToken(token);

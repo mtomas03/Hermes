@@ -77,7 +77,7 @@ class MessageServiceTest {
         verify(wsService).sendMessage(captor.capture());
         OutboundMessageDto dto = captor.getValue();
         assertEquals("alice-bob", dto.conversationId());
-        assertEquals("alice", dto.myUsername());
+        assertEquals("alice", dto.senderUsername());
         assertEquals("bob", dto.recipientUsername());
         assertEquals("hello", dto.content());
         assertEquals(1L, dto.logicalTimestamp());

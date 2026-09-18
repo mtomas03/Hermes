@@ -3,8 +3,7 @@ package it.unibo.hermes.client.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.client.config.AppProperties;
-import it.unibo.hermes.client.dto.LoginResponseDto;
-import it.unibo.hermes.client.dto.UserDto;
+import it.unibo.hermes.client.dto.AuthResponseDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -17,7 +16,7 @@ import reactor.test.StepVerifier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class RestAuthServiceTest {
+class AuthServiceTest {
 
     private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
@@ -28,7 +27,6 @@ class RestAuthServiceTest {
         props = new AppProperties();
         ReflectionTestUtils.setField(props, "registerPath", "/api/v1/auth/register");
         ReflectionTestUtils.setField(props, "loginPath", "/api/v1/auth/login");
-        ReflectionTestUtils.setField(props, "userSearchPath", "/api/v1/users/search");
     }
 
     private WebClient stubClient(HttpStatus status, String jsonBody) {
@@ -43,8 +41,8 @@ class RestAuthServiceTest {
 
     @Test
     void loginWithValidCredentialsShouldReturnLoginResponse() throws Exception {
-        LoginResponseDto expected = new LoginResponseDto("jwt-abc", "alice", java.time.Instant.now());
-        RestAuthService service = new RestAuthService(stubClient(HttpStatus.OK, mapper.writeValueAsString(expected)), props);
+        AuthResponseDto expected = new AuthResponseDto("jwt-abc", "alice", 3_600_000);
+        AuthService service = new AuthService(stubClient(HttpStatus.OK, mapper.writeValueAsString(expected)), props);
 
         StepVerifier.create(service.login("alice", "secret"))
                 .assertNext(resp -> assertEquals("jwt-abc", resp.token()))
@@ -53,7 +51,7 @@ class RestAuthServiceTest {
 
     @Test
     void loginWithInvalidCredentialsShouldFailWithInvalidCredentialsMessage() {
-        RestAuthService service = new RestAuthService(stubClient(HttpStatus.UNAUTHORIZED, null), props);
+        AuthService service = new AuthService(stubClient(HttpStatus.UNAUTHORIZED, null), props);
 
         StepVerifier.create(service.login("alice", "wrong"))
                 .expectErrorMatches(e -> e.getMessage().contains("Invalid credentials"))
@@ -62,7 +60,7 @@ class RestAuthServiceTest {
 
     @Test
     void registrationSuccessShouldCompleteWithoutError() {
-        RestAuthService service = new RestAuthService(stubClient(HttpStatus.CREATED, null), props);
+        AuthService service = new AuthService(stubClient(HttpStatus.CREATED, null), props);
 
         StepVerifier.create(service.register("newuser", "password123"))
                 .verifyComplete();
@@ -70,30 +68,11 @@ class RestAuthServiceTest {
 
     @Test
     void registrationWithDuplicateUsernameShouldFail() {
-        RestAuthService service = new RestAuthService(
+        AuthService service = new AuthService(
                 stubClient(HttpStatus.BAD_REQUEST, "Username 'alice' is already taken"), props);
 
         StepVerifier.create(service.register("alice", "password123"))
                 .expectErrorMatches(e -> e.getMessage().contains("Registration failed"))
                 .verify();
-    }
-
-    @Test
-    void searchUserNotFoundShouldFail() {
-        RestAuthService service = new RestAuthService(stubClient(HttpStatus.NOT_FOUND, null), props);
-
-        StepVerifier.create(service.searchUser("ghost", "Bearer t"))
-                .expectErrorMatches(e -> e.getMessage().contains("User not found"))
-                .verify();
-    }
-
-    @Test
-    void searchUserFoundShouldReturnUserDto() throws Exception {
-        UserDto dto = new UserDto("bob");
-        RestAuthService service = new RestAuthService(stubClient(HttpStatus.OK, mapper.writeValueAsString(dto)), props);
-
-        StepVerifier.create(service.searchUser("bob", "Bearer t"))
-                .assertNext(u -> assertEquals("bob", u.username()))
-                .verifyComplete();
     }
 }

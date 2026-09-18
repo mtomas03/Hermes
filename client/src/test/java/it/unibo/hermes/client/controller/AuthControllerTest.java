@@ -1,11 +1,12 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.LoginResponseDto;
+import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.domain.AuthToken;
+import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
+import it.unibo.hermes.client.service.AuthService;
 import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.RestAuthService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,7 +14,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
-import java.time.Instant;
 import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -26,7 +26,7 @@ class AuthControllerTest {
     private static final long ASYNC_TIMEOUT_MS = 2000;
 
     @Mock
-    private RestAuthService authService;
+    private AuthService authService;
     @Mock
     private ClientStateModel stateModel;
     @Mock
@@ -47,14 +47,14 @@ class AuthControllerTest {
 
     @Test
     void successfulLoginShouldStoreTokenAndUserAndAuthenticate() {
-        LoginResponseDto response = new LoginResponseDto("jwt-token", "alice", Instant.now().plusSeconds(3600));
+        AuthResponseDto response = new AuthResponseDto("jwt-token", "alice", 3_600_000);
         when(authService.login("alice", "secret")).thenReturn(Mono.just(response));
 
         controller.login("alice", "secret", onError);
 
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setAuthToken(any(AuthToken.class));
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setCurrentUser(new it.unibo.hermes.client.model.domain.User("alice"));
-        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveLocalUser(new it.unibo.hermes.client.model.domain.User("alice"));
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setCurrentUser(new User("alice"));
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveLocalUser(new User("alice"));
         verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).connect("jwt-token");
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setAuthState(AuthState.AUTHENTICATED);
         verifyNoInteractions(onError);
