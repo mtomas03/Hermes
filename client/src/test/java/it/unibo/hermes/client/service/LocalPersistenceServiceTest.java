@@ -1,9 +1,8 @@
 package it.unibo.hermes.client.service;
 
-import it.unibo.hermes.client.infrastructure.persistance.ConversationRepository;
-import it.unibo.hermes.client.infrastructure.persistance.LocalUserRepository;
-import it.unibo.hermes.client.infrastructure.persistance.MessageRepository;
-import it.unibo.hermes.client.infrastructure.persistance.SyncCursorRepository;
+import it.unibo.hermes.client.repository.ConversationRepository;
+import it.unibo.hermes.client.repository.LocalUserRepository;
+import it.unibo.hermes.client.repository.MessageRepository;
 import it.unibo.hermes.client.model.domain.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,19 +22,17 @@ import static org.mockito.Mockito.when;
 class LocalPersistenceServiceTest {
 
     @Mock
-    private MessageRepository messageRepo;
+    private MessageRepository messageRepository;
     @Mock
-    private ConversationRepository conversationRepo;
+    private ConversationRepository conversationRepository;
     @Mock
-    private SyncCursorRepository cursorRepo;
-    @Mock
-    private LocalUserRepository userRepo;
+    private LocalUserRepository userRepository;
 
     private LocalPersistenceService service;
 
     @BeforeEach
     void setUp() {
-        service = new LocalPersistenceService(messageRepo, conversationRepo, cursorRepo, userRepo);
+        service = new LocalPersistenceService(messageRepository, conversationRepository, userRepository);
     }
 
     @Test
@@ -47,7 +43,7 @@ class LocalPersistenceServiceTest {
 
         service.saveMessage(msg);
 
-        verify(messageRepo).insertIfAbsent(msg);
+        verify(messageRepository).insertIfAbsent(msg);
     }
 
     @Test
@@ -55,17 +51,17 @@ class LocalPersistenceServiceTest {
         Message msg = new Message(
                 "m1", "alice-bob", "alice", "bob",
                 "hi", 1L, MessageStatus.SENT);
-        when(messageRepo.findByConversation("alice-bob")).thenReturn(List.of(msg));
+        when(messageRepository.findByConversation("alice-bob")).thenReturn(List.of(msg));
 
         List<Message> result = service.loadMessages("alice-bob");
 
         assertEquals(1, result.size());
-        verify(messageRepo).findByConversation("alice-bob");
+        verify(messageRepository).findByConversation("alice-bob");
     }
 
     @Test
     void loadingMessagesForConversationWithNoHistoryShouldReturnEmptyList() {
-        when(messageRepo.findByConversation("conv-empty")).thenReturn(List.of());
+        when(messageRepository.findByConversation("conv-empty")).thenReturn(List.of());
 
         List<Message> result = service.loadMessages("conv-empty");
 
@@ -76,7 +72,7 @@ class LocalPersistenceServiceTest {
     void updatingMessageStatusShouldDelegateToMessageRepository() {
         service.updateMessageStatus("m1", MessageStatus.SENT);
 
-        verify(messageRepo).updateStatus("m1", MessageStatus.SENT);
+        verify(messageRepository).updateStatus("m1", MessageStatus.SENT);
     }
 
     @Test
@@ -85,13 +81,13 @@ class LocalPersistenceServiceTest {
 
         service.saveConversation(conv);
 
-        verify(conversationRepo).upsert(conv);
+        verify(conversationRepository).upsert(conv);
     }
 
     @Test
     void loadingAllConversationsShouldDelegateToConversationRepository() {
         Conversation conv = new Conversation("alice-bob", new User("bob"));
-        when(conversationRepo.findAll()).thenReturn(List.of(conv));
+        when(conversationRepository.findAll()).thenReturn(List.of(conv));
 
         List<Conversation> result = service.loadAllConversations();
 
@@ -100,30 +96,12 @@ class LocalPersistenceServiceTest {
 
     @Test
     void findingConversationShouldDelegateToConversationRepository() {
-        when(conversationRepo.findByConversationId("alice-bob")).thenReturn(Optional.empty());
+        when(conversationRepository.findByConversationId("alice-bob")).thenReturn(Optional.empty());
 
         Optional<Conversation> result = service.findConversation("alice-bob");
 
         assertTrue(result.isEmpty());
-        verify(conversationRepo).findByConversationId("alice-bob");
-    }
-
-    @Test
-    void savingCursorShouldDelegateToCursorRepository() {
-        SyncCursor cursor = new SyncCursor("alice-bob", "m1", Instant.now());
-
-        service.saveCursor(cursor);
-
-        verify(cursorRepo).upsert(cursor);
-    }
-
-    @Test
-    void loadingCursorShouldDelegateToCursorRepository() {
-        when(cursorRepo.findByConversation("alice-bob")).thenReturn(Optional.empty());
-
-        Optional<SyncCursor> result = service.loadCursor("alice-bob");
-
-        assertTrue(result.isEmpty());
+        verify(conversationRepository).findByConversationId("alice-bob");
     }
 
     @Test
@@ -132,12 +110,12 @@ class LocalPersistenceServiceTest {
 
         service.saveLocalUser(user);
 
-        verify(userRepo).save(user);
+        verify(userRepository).save(user);
     }
 
     @Test
     void loadingLocalUserShouldDelegateToUserRepository() {
-        when(userRepo.findFirst()).thenReturn(Optional.of(new User("alice")));
+        when(userRepository.findFirst()).thenReturn(Optional.of(new User("alice")));
 
         Optional<User> result = service.loadLocalUser();
 
@@ -148,6 +126,6 @@ class LocalPersistenceServiceTest {
     void clearingLocalUserShouldDelegateToUserRepository() {
         service.clearLocalUser();
 
-        verify(userRepo).clear();
+        verify(userRepository).clear();
     }
 }

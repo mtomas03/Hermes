@@ -15,7 +15,6 @@ import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -41,7 +40,7 @@ class SyncControllerTest {
     }
 
     @Test
-    void syncAllShouldDoNothingWithoutAnAuthToken() {
+    void syncAllShouldDoNothingWithoutValidAuthToken() {
         when(stateModel.getAuthToken()).thenReturn(null);
 
         controller.syncAll();
@@ -50,16 +49,17 @@ class SyncControllerTest {
     }
 
     @Test
-    void syncAllShouldFetchConversationsWhenTokenIsPresent() {
-        AuthToken expired = new AuthToken("t", Instant.now().minusSeconds(60));
-        when(stateModel.getAuthToken()).thenReturn(expired);
+    void syncAllShouldFetchAndSyncConversationsWhenTokenIsValid() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
         ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob");
-        when(syncService.fetchConversations(anyString())).thenReturn(Mono.just(List.of(dto)));
-        when(persistence.loadAllConversations()).thenReturn(
-                List.of(new Conversation("alice-bob", new User("bob"))));
-        when(persistence.loadCursor("alice-bob")).thenReturn(Optional.empty());
+        when(syncService.fetchConversations(validToken.bearerHeader()))
+                .thenReturn(Mono.just(List.of(dto)));
+        when(persistence.loadAllConversations())
+                .thenReturn(List.of(new Conversation("alice-bob", new User("bob"))));
+
         SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
-        when(syncService.syncConversation(eq("alice-bob"), any(), anyString()))
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
                 .thenReturn(Mono.just(syncResponse));
 
         controller.syncAll();
@@ -68,19 +68,55 @@ class SyncControllerTest {
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConversations(anyList());
         verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse);
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setSyncing(false);
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setStatusMessage("Online");
     }
 
     @Test
-    void syncAllShouldReportFailureWhenFetchingConversationsFails() {
-        AuthToken expired = new AuthToken("t", Instant.now().minusSeconds(60));
-        when(stateModel.getAuthToken()).thenReturn(expired);
-        when(syncService.fetchConversations(anyString()))
-                .thenReturn(Mono.error(new RuntimeException("network down")));
+    void syncConversationIfNeededShouldSyncAndRefreshIfSelected() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        Conversation selectedConv = new Conversation("alice-bob", new User("bob"));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getSelectedConversation()).thenReturn(selectedConv);
+        SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
+                .thenReturn(Mono.just(syncResponse));
 
-        controller.syncAll();
+        controller.syncConversationIfNeeded("alice-bob");
 
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setSyncing(false);
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setStatusMessage("Sync failed");
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse);
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).loadMessages("alice-bob");
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(anyList());
+    }
+
+    @Test
+    void syncConversationIfNeededShouldSkipIfAlreadySyncedInCurrentSession() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
+                .thenReturn(Mono.just(syncResponse));
+
+        controller.syncConversationIfNeeded("alice-bob");
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).syncConversation(eq("alice-bob"), anyString());
+        controller.syncConversationIfNeeded("alice-bob");
+
+        verify(syncService, times(1)).syncConversation(eq("alice-bob"), anyString());
+    }
+
+    @Test
+    void resetSyncStateShouldAllowReSyncingConversations() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
+                .thenReturn(Mono.just(syncResponse));
+
+        controller.syncConversationIfNeeded("alice-bob");
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).syncConversation(eq("alice-bob"), anyString());
+        controller.resetSyncState();
+
+        controller.syncConversationIfNeeded("alice-bob");
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS).times(2)).syncConversation(eq("alice-bob"), anyString());
     }
 
     @Test
