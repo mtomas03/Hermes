@@ -1,9 +1,8 @@
 package it.unibo.hermes.client.service;
 
-import it.unibo.hermes.client.infrastructure.persistance.ConversationRepository;
-import it.unibo.hermes.client.infrastructure.persistance.LocalUserRepository;
-import it.unibo.hermes.client.infrastructure.persistance.MessageRepository;
-import it.unibo.hermes.client.infrastructure.persistance.SyncCursorRepository;
+import it.unibo.hermes.client.repository.ConversationRepository;
+import it.unibo.hermes.client.repository.LocalUserRepository;
+import it.unibo.hermes.client.repository.MessageRepository;
 import it.unibo.hermes.client.model.domain.*;
 import org.springframework.stereotype.Service;
 
@@ -11,71 +10,61 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Facade over the SQLite DAOs.
+ * Service responsible for persisting and retrieving messages, conversations
+ * and local user data.
  */
 @Service
 public class LocalPersistenceService {
 
-    private final MessageRepository messageRepo;
-    private final ConversationRepository conversationRepo;
-    private final SyncCursorRepository cursorRepo;
-    private final LocalUserRepository userRepo;
+    private final MessageRepository messageRepository;
+    private final ConversationRepository conversationRepository;
+    private final LocalUserRepository userRepository;
 
     public LocalPersistenceService(MessageRepository messageRepository,
                                    ConversationRepository conversationRepository,
-                                   SyncCursorRepository syncCursorRepository,
                                    LocalUserRepository localUserRepository) {
-        this.messageRepo = messageRepository;
-        this.conversationRepo = conversationRepository;
-        this.cursorRepo = syncCursorRepository;
-        this.userRepo = localUserRepository;
+        this.messageRepository = messageRepository;
+        this.conversationRepository = conversationRepository;
+        this.userRepository = localUserRepository;
     }
 
     public void saveMessage(Message msg) {
-        messageRepo.insertIfAbsent(msg);
+        messageRepository.insertIfAbsent(msg);
     }
 
     public List<Message> loadMessages(String conversationId) {
-        return messageRepo.findByConversation(conversationId);
+        return messageRepository.findByConversation(conversationId);
     }
 
     public void updateMessageStatus(String messageId, MessageStatus status) {
-        messageRepo.updateStatus(messageId, status);
+        messageRepository.updateStatus(messageId, status);
     }
 
     public void saveConversation(Conversation conv) {
-        conversationRepo.upsert(conv);
+        conversationRepository.upsert(conv);
     }
 
     public List<Conversation> loadAllConversations() {
-        return conversationRepo.findAll();
+        return conversationRepository.findAll();
     }
 
     public Optional<Conversation> findConversation(String conversationId) {
-        return conversationRepo.findByConversationId(conversationId);
-    }
-
-    public void saveCursor(SyncCursor cursor) {
-        cursorRepo.upsert(cursor);
-    }
-
-    public Optional<SyncCursor> loadCursor(String conversationId) {
-        return cursorRepo.findByConversation(conversationId);
+        return conversationRepository.findByConversationId(conversationId);
     }
 
     public void saveLocalUser(User user) {
-        userRepo.save(user);
+        userRepository.save(user);
     }
 
     public Optional<User> loadLocalUser() {
-        return userRepo.findFirst();
+        return userRepository.findFirst();
     }
 
     public void clearLocalUser() {
-        userRepo.clear();
+        userRepository.clear();
     }
 
     public long getLastLogicalTimestamp(String conversationId) {
-        return messageRepo.getLastLogicalTimestamp(conversationId);
+        return messageRepository.getLastLogicalTimestamp(conversationId);
     }
 }
