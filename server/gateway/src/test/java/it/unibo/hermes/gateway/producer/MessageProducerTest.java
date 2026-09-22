@@ -18,21 +18,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class MessageCreatedProducerTest {
+class MessageProducerTest {
 
     private static final String CREATED_TOPIC = "message-created";
 
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
-
     @Mock
     private SendResult<String, Object> sendResult;
 
-    private MessageCreatedProducer producer;
+    private MessageProducer producer;
 
     @BeforeEach
     void setUp() {
-        producer = new MessageCreatedProducer(kafkaTemplate, CREATED_TOPIC);
+        producer = new MessageProducer(kafkaTemplate, CREATED_TOPIC);
     }
 
     @Test

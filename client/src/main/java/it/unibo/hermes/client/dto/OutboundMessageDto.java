@@ -1,8 +1,8 @@
 package it.unibo.hermes.client.dto;
 
 /**
- * Data Transfer Object representing an outbound message to be sent
- * from the client to the server.
+ * Data Transfer Object representing the message sent by the client
+ * to the Gateway over STOMP at {@code /app/chat.sendMessage}.
  *
  * @param messageId         the unique identifier of the message
  * @param conversationId    the unique identifier of the conversation to which this message belongs

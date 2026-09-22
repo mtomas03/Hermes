@@ -16,12 +16,18 @@ public class ConversationRepository {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationRepository.class);
 
-    private final DatabaseInitializer db;
+    private final SQLiteDatabaseConnection db;
 
-    public ConversationRepository(DatabaseInitializer db) {
+    public ConversationRepository(SQLiteDatabaseConnection db) {
         this.db = db;
     }
 
+    /**
+     * Upserts a conversation into the database.
+     * If a conversation with the same ID already exists, it will be updated.
+     *
+     * @param c the conversation to upsert
+     */
     public void upsert(Conversation c) {
         String sql = """
                 INSERT INTO conversation
@@ -40,6 +46,11 @@ public class ConversationRepository {
         }
     }
 
+    /**
+     * Retrieves all conversations from the database.
+     *
+     * @return a list of all conversations
+     */
     public List<Conversation> findAll() {
         String sql = "SELECT * FROM conversation";
         List<Conversation> result = new ArrayList<>();
@@ -55,6 +66,12 @@ public class ConversationRepository {
         return result;
     }
 
+    /**
+     * Finds a conversation by its ID.
+     *
+     * @param conversationId    the ID of the conversation to find
+     * @return an Optional containing the conversation if found, or empty if not found
+     */
     public Optional<Conversation> findByConversationId(String conversationId) {
         String sql = "SELECT * FROM conversation WHERE conversation_id = ?";
         try (Connection conn = db.getDataSource().getConnection();

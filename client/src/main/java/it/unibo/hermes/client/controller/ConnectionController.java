@@ -2,7 +2,10 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;
+import it.unibo.hermes.client.dto.ErrorDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.dto.SystemMessageDto;
+import it.unibo.hermes.client.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.state.ClientStateModel;
@@ -44,6 +47,7 @@ public class ConnectionController {
 
     private final AtomicInteger retryCount = new AtomicInteger(0);
     private ScheduledFuture<?> pending = null;
+    private volatile String currentToken;
 
     /**
      * Invoked once after a successful STOMP handshake (and subscriptions).
@@ -69,6 +73,7 @@ public class ConnectionController {
      * Wires callbacks on the WS service and initiates the STOMP connection.
      */
     public void connect(String rawToken) {
+        this.currentToken = rawToken;
         wsService.setOnConnected(() -> {
             log.info("WebSocket connected");
             retryCount.set(0);
@@ -79,6 +84,8 @@ public class ConnectionController {
 
         wsService.setOnMessage(this::handleInboundMessage);
         wsService.setOnAck(this::handleAck);
+        wsService.setOnAppError(this::handleAppError);
+        wsService.setOnSystemMessage(this::handleSystemMessage);
 
         wsService.setOnError(err ->
                 log.warn("WebSocket error: {}", err.getMessage()));
@@ -105,19 +112,42 @@ public class ConnectionController {
     private void handleInboundMessage(InboundMessageDto dto) {
         log.debug("Inbound: {} in conv {}", dto.messageId(), dto.conversationId());
 
-        // Persist first (idempotent)
-        Message msg = msgService.receiveAndPersist(dto);
+        Message msg;
+        try {
+            msg = msgService.receiveAndPersist(dto);
+        } catch (MessagePersistenceException e) {
+            log.error("Could not persist inbound message {} - no ACK will be sent: {}",
+                    dto.messageId(), e.getMessage());
+            return;
+        }
 
         // Only update the active message list if this conv is currently open
         Conversation selected = stateModel.getSelectedConversation();
         if (selected != null && selected.conversationId().equals(dto.conversationId())) {
             stateModel.appendMessage(msg);
         }
+
+        wsService.sendAck(dto.messageId());
     }
 
     private void handleAck(AckDto ack) {
         log.debug("ACK for {}: {}", ack.messageId(), ack.status());
         msgService.acknowledgeDelivery(ack.messageId());
+    }
+
+    private void handleAppError(ErrorDto err) {
+        log.warn("Server rejected message [{}]: {} - {}", err.messageId(), err.code(), err.reason());
+    }
+
+    private void handleSystemMessage(SystemMessageDto msg) {
+        log.info("System message received: {} ({})", msg.type(), msg.reason());
+        if ("FORCE_RECONNECT".equals(msg.type())) {
+            log.warn("Gateway requested a forced reconnect ({}) - reconnecting to resync", msg.reason());
+            stateModel.setConnectionState(ConnectionState.RECONNECTING);
+            stateModel.setStatusMessage("Resynchronising...");
+            wsService.disconnect();
+            wsService.connect(currentToken);
+        }
     }
 
     private void scheduleRetry(String rawToken) {

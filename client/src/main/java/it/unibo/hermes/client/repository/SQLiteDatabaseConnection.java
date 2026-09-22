@@ -16,13 +16,13 @@ import java.sql.Statement;
  * Initialises the local SQLite database schema on application start.
  */
 @Component
-public class DatabaseInitializer {
+public class SQLiteDatabaseConnection {
 
-    private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
+    private static final Logger log = LoggerFactory.getLogger(SQLiteDatabaseConnection.class);
 
     private final DataSource dataSource;
 
-    public DatabaseInitializer(AppProperties props) {
+    public SQLiteDatabaseConnection(AppProperties props) {
         if (props != null) {
             SQLiteDataSource ds = new SQLiteDataSource();
             ds.setUrl("jdbc:sqlite:" + props.getDbPath());

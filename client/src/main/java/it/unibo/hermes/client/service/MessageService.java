@@ -2,6 +2,7 @@ package it.unibo.hermes.client.service;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.OutboundMessageDto;
+import it.unibo.hermes.client.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
 import org.slf4j.Logger;
@@ -77,11 +78,11 @@ public class MessageService {
     }
 
     /**
-     * Converts an inbound DTO received from the server into a domain Message
-     * and persists it (idempotent – safe during reconnect replays).
+     * Converts an inbound DTO received from the server into a domain Message and persists it.
      *
      * @param dto   the inbound message DTO
      * @return the persisted Message entity
+     * @throws MessagePersistenceException if the message could not be persisted
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
         AtomicLong clock = getConversationClock(dto.conversationId());
@@ -97,7 +98,10 @@ public class MessageService {
                 dto.logicalTimestamp(),
                 MessageStatus.SENT);
 
-        persistenceService.saveMessage(msg);
+        boolean persisted = persistenceService.saveMessage(msg);
+        if (!persisted) {
+            throw new MessagePersistenceException(dto.messageId());
+        }
         return msg;
     }
 

@@ -2,7 +2,10 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;
+import it.unibo.hermes.client.dto.ErrorDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.dto.SystemMessageDto;
+import it.unibo.hermes.client.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -43,6 +46,10 @@ class ConnectionControllerTest {
     private ArgumentCaptor<Consumer<InboundMessageDto>> inboundMessageCaptor;
     @Captor
     private ArgumentCaptor<Consumer<AckDto>> ackCaptor;
+    @Captor
+    private ArgumentCaptor<Consumer<ErrorDto>> appErrorCaptor;
+    @Captor
+    private ArgumentCaptor<Consumer<SystemMessageDto>> systemMessageCaptor;
 
     private AppProperties props;
     private ConnectionController controller;
@@ -128,25 +135,47 @@ class ConnectionControllerTest {
 
         verify(msgService).receiveAndPersist(dto);
         verify(stateModel).appendMessage(persisted);
+        verify(wsService).sendAck("m1");
     }
 
     @Test
-    void inboundMessageForADifferentConversationShouldNotBeAppended() {
-        Conversation openedElsewhere = new Conversation("conv-other", new User("carol"));
+    void inboundMessageForADifferentConversationShouldNotBeAppendedButStillAcked() {
+        Conversation openedElsewhere = new Conversation(
+                "conv-other", new User("carol"));
         when(stateModel.getSelectedConversation()).thenReturn(openedElsewhere);
         InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice", "hi", 1L, "SENT");
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
         when(msgService.receiveAndPersist(dto)).thenReturn(
                 new Message(
-                        "m1", "alice-bob", "bob", "alice",
-                        "hi", 1L, MessageStatus.SENT));
+                        "m1", "alice-bob",
+                        "bob", "alice", "hi",
+                        1L, MessageStatus.SENT));
 
         controller.connect("token123");
         verify(wsService).setOnMessage(inboundMessageCaptor.capture());
-
         inboundMessageCaptor.getValue().accept(dto);
 
         verify(stateModel, never()).appendMessage(any());
+        verify(wsService).sendAck("m1");
+    }
+
+    @Test
+    void inboundMessageThatFailsToPersistShouldNotBeAppendedAndShouldNotBeAcked() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
+        when(msgService.receiveAndPersist(dto))
+                .thenThrow(new MessagePersistenceException("m1"));
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(stateModel, never()).appendMessage(any());
+        verify(wsService, never()).sendAck(any());
     }
 
     @Test
@@ -158,5 +187,44 @@ class ConnectionControllerTest {
         ackCaptor.getValue().accept(ack);
 
         verify(msgService).acknowledgeDelivery("m1");
+    }
+
+    @Test
+    void appErrorShouldNotThrowAndShouldNotTouchMessageService() {
+        controller.connect("token123");
+        verify(wsService).setOnAppError(appErrorCaptor.capture());
+        ErrorDto err = new ErrorDto(
+                "MISSING_RECIPIENT",
+                "Field 'recipientUsername' is required",
+                "m1");
+
+        appErrorCaptor.getValue().accept(err);
+
+        verifyNoInteractions(msgService);
+    }
+
+    @Test
+    void forceReconnectSystemMessageShouldDisconnectAndReconnectWithSameToken() {
+        controller.connect("token123");
+        verify(wsService).setOnSystemMessage(systemMessageCaptor.capture());
+        clearInvocations(wsService);
+
+        systemMessageCaptor.getValue().accept(new SystemMessageDto(
+                "FORCE_RECONNECT", "BACKBONE_RECOVERED"));
+
+        verify(wsService).disconnect();
+        verify(wsService).connect("token123");
+    }
+
+    @Test
+    void nonForceReconnectSystemMessageShouldNotTriggerReconnect() {
+        controller.connect("token123");
+        verify(wsService).setOnSystemMessage(systemMessageCaptor.capture());
+        clearInvocations(wsService);
+
+        systemMessageCaptor.getValue().accept(new SystemMessageDto(
+                "SOME_OTHER_TYPE", "n/a"));
+
+        verify(wsService, never()).disconnect();
     }
 }

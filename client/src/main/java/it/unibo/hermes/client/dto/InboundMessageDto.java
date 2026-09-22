@@ -1,7 +1,8 @@
 package it.unibo.hermes.client.dto;
 
 /**
- * Data transfer object representing an inbound message received by the client.
+ * Data transfer object representing the message received by the client
+ * from the Gateway using the STOMP subscription {@code /user/queue/messages}.
  *
  * @param messageId          the unique identifier of the message
  * @param conversationId     the unique identifier of the conversation

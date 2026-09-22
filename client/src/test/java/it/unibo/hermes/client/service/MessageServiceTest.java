@@ -2,6 +2,7 @@ package it.unibo.hermes.client.service;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.OutboundMessageDto;
+import it.unibo.hermes.client.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -96,6 +98,7 @@ class MessageServiceTest {
 
     @Test
     void receivingAnInboundMessageShouldPersistItAndAdvanceLamportClock() {
+        when(persistence.saveMessage(any())).thenReturn(true);
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob", "bob", "alice",
                 "hi", 5L, "SENT");
@@ -105,6 +108,30 @@ class MessageServiceTest {
         when(wsService.sendMessage(any())).thenReturn(true);
         Message nextSent = messageService.send("alice", "alice-bob", "bob", "reply");
         assertEquals(7L, nextSent.getLogicalTimestamp());
+    }
+
+    @Test
+    void receivingAnInboundMessageWhenPersistenceFailsShouldThrowAndNotAdvanceClock() {
+        when(persistence.saveMessage(any())).thenReturn(false);
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 5L, "SENT");
+
+        assertThrows(MessagePersistenceException.class, () -> messageService.receiveAndPersist(dto));
+    }
+
+    @Test
+    void receivingTheSameInboundMessageTwiceShouldStillBeConsideredPersistedBothTimes() {
+        when(persistence.saveMessage(any())).thenReturn(true);
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob", "bob", "alice",
+                "hi", 5L, "SENT");
+
+        Message first = messageService.receiveAndPersist(dto);
+        Message second = messageService.receiveAndPersist(dto);
+
+        assertEquals(first.getMessageId(), second.getMessageId());
+        verify(persistence, times(2)).saveMessage(any());
     }
 
     @Test
