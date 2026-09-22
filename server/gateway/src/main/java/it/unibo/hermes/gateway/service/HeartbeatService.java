@@ -3,17 +3,11 @@ package it.unibo.hermes.gateway.service;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.WebSocketSession;
-
-import java.time.Instant;
-import java.util.List;
 
 /**
- * Scheduled service monitoring active WebSocket connections for missing heartbeat signals.
+ * Scheduled service keeping each connected user's presence TTL alive in Redis.
  */
 @Service
 public class HeartbeatService {
@@ -23,13 +17,10 @@ public class HeartbeatService {
     private final WebSocketSessionRegistry registry;
     private final PresenceService presenceService;
 
-    @Value("${hermes.gateway.heartbeat-timeout-ms:90000}")
-    private long heartbeatTimeoutMs;
-
     /**
-     * Creates the heartbeat monitoring service.
+     * Creates the heartbeat service.
      *
-     * @param registry        the registry tracking active local WebSocket sessions
+     * @param registry        the registry tracking users currently connected on this instance
      * @param presenceService the service managing user presence state updates
      */
     public HeartbeatService(WebSocketSessionRegistry registry,
@@ -39,31 +30,15 @@ public class HeartbeatService {
     }
 
     /**
-     * Scans registered sessions periodically and closes any connections that have exceeded the heartbeat timeout.
-     *
-     * <p> Identifies sessions whose last PING timestamp falls outside the acceptable threshold, terminating
-     * them with a session-not-reliable status to prompt client reconnection and resource release.
+     * Refreshes the Redis presence TTL of every user currently connected to this Gateway instance.
      */
     @Scheduled(fixedDelayString = "${hermes.gateway.heartbeat-check-ms:30000}")
-    public void checkHeartbeats() {
-        Instant threshold = Instant.now().minusMillis(heartbeatTimeoutMs);
-
-        List<WebSocketSessionRegistry.Entry> stale = registry.entriesOlderThan(threshold);
-        for (WebSocketSessionRegistry.Entry entry : stale) {
-            String username = entry.username();
-            WebSocketSession session = entry.session();
-            log.warn("Session for user '{}' timed out – closing", username);
-
+    public void refreshPresenceTtl() {
+        for (String username : registry.allUsernames()) {
             try {
-                if (session.isOpen()) {
-                    session.close(CloseStatus.SESSION_NOT_RELIABLE);
-                }
+                presenceService.refreshTtl(username);
             } catch (Exception e) {
-                log.error("Error closing timed-out session for '{}'", username, e);
-            } finally {
-                // Guarantees clean-up even if the session is already closed or fails to close cleanly
-                registry.unregister(username);
-                presenceService.setOffline(username);
+                log.warn("Failed to refresh presence TTL for '{}': {}", username, e.getMessage());
             }
         }
     }

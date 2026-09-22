@@ -2,7 +2,9 @@ package it.unibo.hermes.client.websocket;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;
+import it.unibo.hermes.client.dto.ErrorDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.dto.SystemMessageDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.NonNull;
@@ -22,6 +24,8 @@ public class StompSessionHandler extends StompSessionHandlerAdapter {
     private final AppProperties props;
     private final Consumer<InboundMessageDto> onMessage;
     private final Consumer<AckDto> onAck;
+    private final Consumer<ErrorDto> onAppError;
+    private final Consumer<SystemMessageDto> onSystemMessage;
     private final Runnable onConnected;
     private final Consumer<Throwable> onError;
     private final Runnable onDisconnected;
@@ -29,17 +33,28 @@ public class StompSessionHandler extends StompSessionHandlerAdapter {
     public StompSessionHandler(AppProperties props,
                                Consumer<InboundMessageDto> onMessage,
                                Consumer<AckDto> onAck,
+                               Consumer<ErrorDto> onAppError,
+                               Consumer<SystemMessageDto> onSystemMessage,
                                Runnable onConnected,
                                Consumer<Throwable> onError,
                                Runnable onDisconnected) {
         this.props = props;
         this.onMessage = onMessage;
         this.onAck = onAck;
+        this.onAppError = onAppError;
+        this.onSystemMessage = onSystemMessage;
         this.onConnected = onConnected;
         this.onError = onError;
         this.onDisconnected = onDisconnected;
     }
 
+    /**
+     * Called when the STOMP session is established. Subscribes to the configured
+     * destinations for inbound messages, ACKs, application errors, and system messages.
+     *
+     * @param session          the established STOMP session
+     * @param connectedHeaders the headers received upon connection
+     */
     @Override
     public void afterConnected(StompSession session, @NonNull StompHeaders connectedHeaders) {
         log.info("STOMP connected - session {}", session.getSessionId());
@@ -60,7 +75,7 @@ public class StompSessionHandler extends StompSessionHandlerAdapter {
             }
         });
 
-        // Subscribe to delivery ACKs
+        // Subscribe to delivery/acceptance ACKs
         session.subscribe(props.getStompAcksDestination(), new StompFrameHandler() {
             @Override
             public Type getPayloadType(@NonNull StompHeaders h) {
@@ -76,9 +91,50 @@ public class StompSessionHandler extends StompSessionHandlerAdapter {
             }
         });
 
+        // Subscribe to structured application errors
+        session.subscribe(props.getStompErrorsDestination(), new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(@NonNull StompHeaders h) {
+                return ErrorDto.class;
+            }
+
+            @Override
+            public void handleFrame(@NonNull StompHeaders h, Object payload) {
+                if (payload instanceof ErrorDto err) {
+                    log.debug("Received application error: {}", err.code());
+                    onAppError.accept(err);
+                }
+            }
+        });
+
+        // Subscribe to server-initiated control messages (e.g. FORCE_RECONNECT)
+        session.subscribe(props.getStompSystemDestination(), new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(@NonNull StompHeaders h) {
+                return SystemMessageDto.class;
+            }
+
+            @Override
+            public void handleFrame(@NonNull StompHeaders h, Object payload) {
+                if (payload instanceof SystemMessageDto msg) {
+                    log.debug("Received system message: {}", msg.type());
+                    onSystemMessage.accept(msg);
+                }
+            }
+        });
+
         onConnected.run();
     }
 
+    /**
+     * Called when an exception occurs during STOMP frame processing.
+     *
+     * @param session the STOMP session
+     * @param cmd     the STOMP command that caused the exception
+     * @param headers the headers of the STOMP frame
+     * @param payload the payload of the STOMP frame
+     * @param ex      the exception that occurred
+     */
     @Override
     public void handleException(@NonNull StompSession session, StompCommand cmd,
                                 @NonNull StompHeaders headers, @NonNull byte[] payload, @NonNull Throwable ex) {
@@ -86,6 +142,12 @@ public class StompSessionHandler extends StompSessionHandlerAdapter {
         onError.accept(ex);
     }
 
+    /**
+     * Called when a transport error occurs (e.g., connection loss).
+     *
+     * @param session the STOMP session
+     * @param ex      the exception that occurred
+     */
     @Override
     public void handleTransportError(@NonNull StompSession session, Throwable ex) {
         log.warn("STOMP transport error: {}", ex.getMessage());

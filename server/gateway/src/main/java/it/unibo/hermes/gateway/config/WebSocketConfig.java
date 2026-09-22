@@ -1,44 +1,75 @@
 package it.unibo.hermes.gateway.config;
 
-import it.unibo.hermes.gateway.security.WebSocketJwtHandshakeInterceptor;
-import it.unibo.hermes.gateway.websocket.ChatWebSocketHandler;
+import it.unibo.hermes.gateway.security.StompAuthChannelInterceptor;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.socket.config.annotation.EnableWebSocket;
-import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
-import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+import org.springframework.messaging.simp.config.ChannelRegistration;
+import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
+import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 /**
- * Spring configuration class registering the WebSocket endpoint and its connection management components.
+ * Spring WebSocket configuration class that sets up the STOMP endpoint,
+ * message broker and JWT authentication interceptor.
  */
 @Configuration
-@EnableWebSocket
-public class WebSocketConfig implements WebSocketConfigurer {
+@EnableWebSocketMessageBroker
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
-    private final ChatWebSocketHandler chatWebSocketHandler;
-    private final WebSocketJwtHandshakeInterceptor jwtHandshakeInterceptor;
+    private final StompAuthChannelInterceptor authChannelInterceptor;
 
-    /**
-     * Creates the WebSocket configuration with the session handler and authentication handshake interceptor.
-     *
-     * @param chatWebSocketHandler    the handler processing websocket incoming messages
-     * @param jwtHandshakeInterceptor the interceptor validating JWT tokens during the HTTP upgrade handshake
-     */
-    public WebSocketConfig(ChatWebSocketHandler chatWebSocketHandler,
-                           WebSocketJwtHandshakeInterceptor jwtHandshakeInterceptor) {
-        this.chatWebSocketHandler = chatWebSocketHandler;
-        this.jwtHandshakeInterceptor = jwtHandshakeInterceptor;
+    public WebSocketConfig(StompAuthChannelInterceptor authChannelInterceptor) {
+        this.authChannelInterceptor = authChannelInterceptor;
     }
 
     /**
-     * Maps the WebSocket endpoint to the chat handler and attaches the authentication handshake interceptor.
+     * Registers the WebSocket STOMP endpoint.
      *
-     * @param registry the registry used to map WebSocket routes to their respective handlers
+     * @param registry  the STOMP endpoint registry
      */
     @Override
-    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry
-                .addHandler(chatWebSocketHandler, "/ws")
-                .addInterceptors(jwtHandshakeInterceptor)
-                .setAllowedOriginPatterns("*");
+    public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.addEndpoint("/ws").setAllowedOriginPatterns("*");
+    }
+
+    /**
+     * Configures the application destination prefix and the in-memory broker used for
+     * {@code /queue} destinations, with native STOMP heartbeats enabled.
+     *
+     * @param registry  the message broker registry
+     */
+    @Override
+    public void configureMessageBroker(MessageBrokerRegistry registry) {
+        registry.setApplicationDestinationPrefixes("/app");
+        registry.enableSimpleBroker("/queue")
+                .setTaskScheduler(heartbeatTaskScheduler());
+    }
+
+    /**
+     * Registers the JWT authentication interceptor on the client-inbound channel, so every
+     * inbound STOMP frame (starting with CONNECT) is checked before reaching the broker.
+     *
+     * @param registration  the inbound channel registration
+     */
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(authChannelInterceptor);
+    }
+
+    /**
+     * Creates a single-threaded task scheduler for the STOMP broker
+     * to send heartbeats to clients.
+     *
+     * @return a single-threaded task scheduler
+     */
+    @Bean
+    public TaskScheduler heartbeatTaskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setThreadNamePrefix("stomp-heartbeat-");
+        scheduler.initialize();
+        return scheduler;
     }
 }

@@ -1,15 +1,12 @@
 package it.unibo.hermes.gateway.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import it.unibo.hermes.gateway.dto.WsMessage;
+import it.unibo.hermes.gateway.dto.SystemMessageDto;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -23,7 +20,7 @@ public class KafkaMonitorService {
 
     private final KafkaHealthProbe kafkaHealthProbe;
     private final WebSocketSessionRegistry registry;
-    private final ObjectMapper objectMapper;
+    private final SimpMessagingTemplate messagingTemplate;
 
     /**
      * Shared atomic status flag indicating Kafka reachability.
@@ -34,15 +31,15 @@ public class KafkaMonitorService {
      * Creates the Kafka monitoring service.
      *
      * @param kafkaHealthProbe the probe executing broker connectivity health checks
-     * @param registry         the registry tracking active local WebSocket sessions
-     * @param objectMapper     the object mapper used to serialize client notification frames
+     * @param registry         the registry tracking users currently connected on this instance
+     * @param messagingTemplate the template used to push control frames to connected users
      */
     public KafkaMonitorService(KafkaHealthProbe kafkaHealthProbe,
                                WebSocketSessionRegistry registry,
-                               ObjectMapper objectMapper) {
+                               SimpMessagingTemplate messagingTemplate) {
         this.kafkaHealthProbe = kafkaHealthProbe;
         this.registry = registry;
-        this.objectMapper = objectMapper;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /**
@@ -74,32 +71,20 @@ public class KafkaMonitorService {
     }
 
     /**
-     * Broadcasts a forced reconnection message to all active WebSocket connections.
+     * Broadcasts a forced reconnection message to every user connected to this Gateway instance.
      *
      * <p> Forces connected clients to reconnect and perform a pull-based synchronisation to fetch
      * messages stored directly in Cassandra during the Kafka outage. This ensures client local history
      * remains consistent with server state before real-time streaming resumes.
      */
     private void forceReconnectAll() {
-        WsMessage msg = WsMessage.forceReconnect("BACKBONE_RECOVERED");
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(msg);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialise FORCE_RECONNECT message", e);
-            return;
-        }
+        SystemMessageDto msg = new SystemMessageDto("FORCE_RECONNECT", "BACKBONE_RECOVERED");
 
-        for (WebSocketSessionRegistry.Entry entry : registry.allEntries()) {
-            WebSocketSession session = entry.session();
+        for (String username : registry.allUsernames()) {
             try {
-                if (session.isOpen()) {
-                    synchronized (session) {
-                        session.sendMessage(new TextMessage(payload));
-                    }
-                }
+                messagingTemplate.convertAndSendToUser(username, "/queue/system", msg);
             } catch (Exception e) {
-                log.warn("Could not send FORCE_RECONNECT to '{}': {}", entry.username(), e.getMessage());
+                log.warn("Could not send FORCE_RECONNECT to '{}': {}", username, e.getMessage());
             }
         }
     }

@@ -1,104 +1,61 @@
 package it.unibo.hermes.gateway.websocket;
 
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.WebSocketSession;
 
-import java.time.Instant;
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registry tracking active WebSocket sessions and client heartbeat timestamps.
+ * Registry tracking the usernames currently connected to this Gateway instance over STOMP.
  */
 @Component
 public class WebSocketSessionRegistry {
 
-    private final ConcurrentHashMap<String, SessionEntry> sessions = new ConcurrentHashMap<>();
+    private final Set<String> connectedUsernames = ConcurrentHashMap.newKeySet();
 
     /**
-     * Binds a username to an active WebSocket session and initialises its heartbeat timestamp.
+     * Marks a username as connected on this Gateway instance.
      *
-     * @param username the username associated with the session
-     * @param session  the active WebSocket session instance
+     * @param username the username associated with the newly established STOMP session
      */
-    public void register(String username, WebSocketSession session) {
-        sessions.put(username, new SessionEntry(session, Instant.now()));
+    public void register(String username) {
+        connectedUsernames.add(username);
     }
 
     /**
-     * Removes the specified user's session from the active registry.
+     * Removes a username from the set of currently connected users.
      *
      * @param username the username to unregister
      */
     public void unregister(String username) {
-        sessions.remove(username);
+        connectedUsernames.remove(username);
     }
 
     /**
-     * Updates the last received heartbeat timestamp for the specified user to current time.
-     *
-     * @param username the username of the pinging client
-     */
-    public void recordHeartbeat(String username) {
-        sessions.computeIfPresent(username,
-                (k, e) -> new SessionEntry(e.session(), Instant.now()));
-    }
-
-    /**
-     * Retrieves the active WebSocket session assigned to the specified user.
+     * Tells whether the given user currently has an active STOMP session on this instance.
      *
      * @param username the target username
-     * @return an {@link Optional} containing the session if registered, or empty if absent
+     * @return {@code true} if the user is currently connected, {@code false} otherwise
      */
-    public Optional<WebSocketSession> sessionOf(String username) {
-        return Optional.ofNullable(sessions.get(username)).map(SessionEntry::session);
+    public boolean isConnected(String username) {
+        return connectedUsernames.contains(username);
     }
 
     /**
-     * Creates a snapshot collection containing all currently registered session entries.
+     * Creates a snapshot of all usernames currently connected to this Gateway instance.
      *
-     * @return a collection of active registry entries
+     * @return an immutable snapshot of the connected usernames
      */
-    public Collection<Entry> allEntries() {
-        return sessions.entrySet().stream()
-                .map(e -> new Entry(e.getKey(), e.getValue().session(), e.getValue().lastHeartbeat()))
-                .toList();
+    public Set<String> allUsernames() {
+        return Set.copyOf(connectedUsernames);
     }
 
     /**
-     * Retrieves all registry entries whose last heartbeat timestamp occurred before the specified threshold.
+     * Returns the total count of currently connected users on this Gateway instance.
      *
-     * @param threshold the threshold timestamp for stale session detection
-     * @return a list of timed-out session entries
-     */
-    public List<Entry> entriesOlderThan(Instant threshold) {
-        return sessions.entrySet().stream()
-                .filter(e -> e.getValue().lastHeartbeat().isBefore(threshold))
-                .map(e -> new Entry(e.getKey(), e.getValue().session(), e.getValue().lastHeartbeat()))
-                .toList();
-    }
-
-    /**
-     * Returns the total count of active WebSocket sessions stored in the registry.
-     *
-     * @return the number of active sessions
+     * @return the number of connected users
      */
     public int size() {
-        return sessions.size();
-    }
-
-    /**
-     * Immutable representation of a session registry entry used for iteration and heartbeat evaluation.
-     *
-     * @param username      the username associated with the session
-     * @param session       the active WebSocket session
-     * @param lastHeartbeat the timestamp of the last received ping frame
-     */
-    public record Entry(String username, WebSocketSession session, Instant lastHeartbeat) {
-    }
-
-    private record SessionEntry(WebSocketSession session, Instant lastHeartbeat) {
+        return connectedUsernames.size();
     }
 }

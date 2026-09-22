@@ -2,6 +2,7 @@ package it.unibo.hermes.gateway.consumer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import it.unibo.hermes.gateway.dto.MessageFromGatewayDto;
 import it.unibo.hermes.gateway.event.MessageDeliveryEvent;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -11,15 +12,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.io.IOException;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,19 +28,17 @@ class MessageDeliveryConsumerTest {
     private static final String TOPIC = "message-delivery";
 
     @Mock
+    private SimpMessagingTemplate messagingTemplate;
+    @Mock
     private WebSocketSessionRegistry sessionRegistry;
-
     @Mock
     private ObjectMapper objectMapper;
-
-    @Mock
-    private WebSocketSession webSocketSession;
 
     private MessageDeliveryConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new MessageDeliveryConsumer(sessionRegistry, objectMapper, CURRENT_GATEWAY_ID);
+        consumer = new MessageDeliveryConsumer(messagingTemplate, sessionRegistry, objectMapper, CURRENT_GATEWAY_ID);
     }
 
     @Test
@@ -53,16 +50,19 @@ class MessageDeliveryConsumerTest {
                 messageId, "alice-bob", "alice", "bob",
                 "gateway-1", "hi", 1L
         );
-
         when(objectMapper.readValue(rawJson, MessageDeliveryEvent.class)).thenReturn(event);
-        when(sessionRegistry.sessionOf("bob")).thenReturn(Optional.of(webSocketSession));
-        when(webSocketSession.isOpen()).thenReturn(true);
-        when(objectMapper.writeValueAsString(event)).thenReturn("{\"serialized\":\"payload\"}");
+        when(sessionRegistry.isConnected("bob")).thenReturn(true);
+
         consumer.consume(record);
 
-        ArgumentCaptor<TextMessage> textMessageCaptor = ArgumentCaptor.forClass(TextMessage.class);
-        verify(webSocketSession).sendMessage(textMessageCaptor.capture());
-        assertThat(textMessageCaptor.getValue().getPayload()).isEqualTo("{\"serialized\":\"payload\"}");
+        ArgumentCaptor<MessageFromGatewayDto> payloadCaptor = ArgumentCaptor.forClass(MessageFromGatewayDto.class);
+        verify(messagingTemplate).convertAndSendToUser(eq("bob"), eq("/queue/messages"), payloadCaptor.capture());
+        MessageFromGatewayDto payload = payloadCaptor.getValue();
+        assertThat(payload.messageId()).isEqualTo(messageId);
+        assertThat(payload.recipientUsername()).isEqualTo("bob");
+        assertThat(payload.senderUsername()).isEqualTo("alice");
+        assertThat(payload.content()).isEqualTo("hi");
+        assertThat(payload.messageStatus()).isEqualTo("DELIVERED");
     }
 
     @Test
@@ -70,7 +70,6 @@ class MessageDeliveryConsumerTest {
         String messageId = UUID.randomUUID().toString();
         String rawJson = "{\"messageId\":\"" + messageId + "\",\"gatewayId\":\"gateway-2\",\"recipientUsername\":\"bob\"}";
         ConsumerRecord<String, String> record = new ConsumerRecord<>(TOPIC, 0, 0L, "gateway-2", rawJson);
-
         MessageDeliveryEvent event = new MessageDeliveryEvent(
                 messageId, "alice-bob", "alice", "bob",
                 "gateway-2", "hi", 1L
@@ -80,11 +79,11 @@ class MessageDeliveryConsumerTest {
         consumer.consume(record);
 
         verifyNoInteractions(sessionRegistry);
-        verifyNoInteractions(webSocketSession);
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test
-    void consumeSessionAbsent() throws Exception {
+    void consumeRecipientNotConnected() throws Exception {
         String messageId = UUID.randomUUID().toString();
         String rawJson = "{\"messageId\":\"" + messageId + "\",\"gatewayId\":\"gateway-1\",\"recipientUsername\":\"bob\"}";
         ConsumerRecord<String, String> record = new ConsumerRecord<>(TOPIC, 0, 0L, "gateway-1", rawJson);
@@ -94,29 +93,11 @@ class MessageDeliveryConsumerTest {
         );
 
         when(objectMapper.readValue(rawJson, MessageDeliveryEvent.class)).thenReturn(event);
-        when(sessionRegistry.sessionOf("bob")).thenReturn(Optional.empty());
+        when(sessionRegistry.isConnected("bob")).thenReturn(false);
         consumer.consume(record);
 
-        verify(sessionRegistry).sessionOf("bob");
-        verifyNoInteractions(webSocketSession);
-    }
-
-    @Test
-    void consumeSessionClosed() throws Exception {
-        String messageId = UUID.randomUUID().toString();
-        String rawJson = "{\"messageId\":\"" + messageId + "\",\"gatewayId\":\"gateway-1\",\"recipientUsername\":\"bob\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>(TOPIC, 0, 0L, "gateway-1", rawJson);
-        MessageDeliveryEvent event = new MessageDeliveryEvent(
-                messageId, "alice-bob", "alice", "bob",
-                "gateway-1", "hi", 1L
-        );
-
-        when(objectMapper.readValue(rawJson, MessageDeliveryEvent.class)).thenReturn(event);
-        when(sessionRegistry.sessionOf("bob")).thenReturn(Optional.of(webSocketSession));
-        when(webSocketSession.isOpen()).thenReturn(false);
-        consumer.consume(record);
-
-        verify(webSocketSession, never()).sendMessage(any());
+        verify(sessionRegistry).isConnected("bob");
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test
@@ -134,7 +115,7 @@ class MessageDeliveryConsumerTest {
     }
 
     @Test
-    void consumeWebSocketSendErrorHandledGracefully() throws Exception {
+    void consumeSendErrorHandledGracefully() throws Exception {
         String messageId = UUID.randomUUID().toString();
         String rawJson = "{\"messageId\":\"" + messageId + "\",\"gatewayId\":\"gateway-1\",\"recipientUsername\":\"bob\"}";
         ConsumerRecord<String, String> record = new ConsumerRecord<>(TOPIC, 0, 0L, "gateway-1", rawJson);
@@ -145,13 +126,12 @@ class MessageDeliveryConsumerTest {
         );
 
         when(objectMapper.readValue(rawJson, MessageDeliveryEvent.class)).thenReturn(event);
-        when(sessionRegistry.sessionOf("bob")).thenReturn(Optional.of(webSocketSession));
-        when(webSocketSession.isOpen()).thenReturn(true);
-        when(objectMapper.writeValueAsString(event)).thenReturn("{\"serialized\":\"payload\"}");
-        doThrow(new IOException("Transport connection broken")).when(webSocketSession).sendMessage(any());
+        when(sessionRegistry.isConnected("bob")).thenReturn(true);
+        doThrow(new RuntimeException("Broker unavailable"))
+                .when(messagingTemplate).convertAndSendToUser(eq("bob"), eq("/queue/messages"), any());
 
         assertThatCode(() -> consumer.consume(record))
                 .doesNotThrowAnyException();
-        verify(webSocketSession).sendMessage(any());
+        verify(messagingTemplate).convertAndSendToUser(eq("bob"), eq("/queue/messages"), any());
     }
 }

@@ -2,12 +2,12 @@ package it.unibo.hermes.gateway.service;
 
 import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.domain.MessageStatus;
-import it.unibo.hermes.gateway.dto.WsMessage;
+import it.unibo.hermes.gateway.dto.MessageToGatewayDto;
 import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
 import it.unibo.hermes.gateway.event.MessageEvent;
 import it.unibo.hermes.gateway.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;
-import it.unibo.hermes.gateway.producer.MessageCreatedProducer;
+import it.unibo.hermes.gateway.producer.MessageProducer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +23,7 @@ public class InboundMessageService {
 
     private static final Logger log = LoggerFactory.getLogger(InboundMessageService.class);
 
-    private final MessageCreatedProducer messageCreatedProducer;
+    private final MessageProducer messageProducer;
     private final CassandraAdapter cassandraAdapter;
 
     @Value("${hermes.kafka.retry.max-attempts:3}")
@@ -38,29 +38,29 @@ public class InboundMessageService {
     /**
      * Creates the message publisher service.
      *
-     * @param messageCreatedProducer the producer handling message creation event publication to Kafka
+     * @param messageProducer the producer handling message creation event publication to Kafka
      * @param cassandraAdapter       the adapter managing direct fallback persistence in Cassandra
      */
-    public InboundMessageService(MessageCreatedProducer messageCreatedProducer,
+    public InboundMessageService(MessageProducer messageProducer,
                                  CassandraAdapter cassandraAdapter) {
-        this.messageCreatedProducer = messageCreatedProducer;
+        this.messageProducer = messageProducer;
         this.cassandraAdapter = cassandraAdapter;
     }
 
     /**
-     * Processes and routes an incoming WebSocket message event through Kafka or direct Cassandra fallback.
+     * Processes and routes an incoming STOMP chat message through Kafka or direct Cassandra fallback.
      *
      * @param inbound        the validated message received from the client
      * @param senderUsername the authenticated username of the sender
      * @return the accepted message event used to construct the acknowledgement response
      * @throws PersistenceUnavailableException if both Kafka and Cassandra are unreachable
      */
-    public MessageEvent publish(WsMessage inbound, String senderUsername) {
-        String recipientUsername = inbound.getRecipientUsername();
-        String conversationId = inbound.getConversationId();
-        Long logicalTimestamp = inbound.getLogicalTimestamp();
-        String messageContent = inbound.getContent();
-        UUID messageId = UUID.fromString(inbound.getMessageId());
+    public MessageEvent publish(MessageToGatewayDto inbound, String senderUsername) {
+        String recipientUsername = inbound.recipientUsername();
+        String conversationId = inbound.conversationId();
+        Long logicalTimestamp = inbound.logicalTimestamp();
+        String messageContent = inbound.content();
+        UUID messageId = UUID.fromString(inbound.messageId());
 
         MessageEvent event = new MessageEvent(
                 messageId,
@@ -105,7 +105,7 @@ public class InboundMessageService {
         long backoff = initialBackoffMs;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                messageCreatedProducer.publish(event);
+                messageProducer.publish(event);
                 return true;
             } catch (BackboneUnavailableException e) {
                 log.warn("Kafka publish attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
