@@ -14,15 +14,15 @@ import java.util.concurrent.TimeUnit;
  * Producer responsible for publishing newly created message events to Kafka.
  */
 @Component
-public class MessageCreatedProducer {
+public class MessageProducer {
 
-    private static final Logger log = LoggerFactory.getLogger(MessageCreatedProducer.class);
+    private static final Logger log = LoggerFactory.getLogger(MessageProducer.class);
     private static final long SEND_TIMEOUT_SECONDS = 3L;
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final String topic;
 
-    public MessageCreatedProducer(
+    public MessageProducer(
             KafkaTemplate<String, Object> kafkaTemplate,
             @Value("${hermes.topics.message-created:message-created}") String topic) {
         this.kafkaTemplate = kafkaTemplate;

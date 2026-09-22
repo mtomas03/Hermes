@@ -2,75 +2,61 @@ package it.unibo.hermes.gateway.websocket;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.socket.WebSocketSession;
-
-import java.time.Instant;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 
 class WebSocketSessionRegistryTest {
 
     private WebSocketSessionRegistry registry;
-    private WebSocketSession session;
 
     @BeforeEach
     void setUp() {
         registry = new WebSocketSessionRegistry();
-        session = mock(WebSocketSession.class);
     }
 
     @Test
-    void shouldFindRegisteredSession() {
-        registry.register("alice", session);
+    void shouldReportRegisteredUserAsConnected() {
+        registry.register("alice");
 
-        Optional<WebSocketSession> found = registry.sessionOf("alice");
-        assertThat(found).contains(session);
+        assertThat(registry.isConnected("alice")).isTrue();
         assertThat(registry.size()).isEqualTo(1);
     }
 
     @Test
-    void shouldNotFindUnregisteredSession() {
-        assertThat(registry.sessionOf("ghost")).isEmpty();
+    void shouldNotReportUnregisteredUserAsConnected() {
+        assertThat(registry.isConnected("ghost")).isFalse();
     }
 
     @Test
-    void shouldRemoveSessionOnUnregister() {
-        registry.register("alice", session);
+    void shouldRemoveUserOnUnregister() {
+        registry.register("alice");
 
         registry.unregister("alice");
 
-        assertThat(registry.sessionOf("alice")).isEmpty();
+        assertThat(registry.isConnected("alice")).isFalse();
         assertThat(registry.size()).isZero();
     }
 
     @Test
-    void shouldNotReportStaleSessionAsOlderThanThresholdRightAfterHeartbeat() {
-        registry.register("alice", session);
-        registry.recordHeartbeat("alice");
+    void registeringTheSameUserTwiceShouldNotDuplicateEntries() {
+        registry.register("alice");
+        registry.register("alice");
 
-        var stale = registry.entriesOlderThan(Instant.now().minusSeconds(60));
-
-        assertThat(stale).isEmpty();
+        assertThat(registry.size()).isEqualTo(1);
     }
 
     @Test
-    void shouldReportSessionAsStaleWhenThresholdIsInTheFuture() {
-        registry.register("alice", session);
+    void allUsernamesShouldReflectCurrentRegistrations() {
+        registry.register("alice");
+        registry.register("bob");
 
-        // Any threshold after "now" makes every entry look older than it
-        var stale = registry.entriesOlderThan(Instant.now().plusSeconds(60));
-
-        assertThat(stale).hasSize(1);
-        assertThat(stale.getFirst().username()).isEqualTo("alice");
+        assertThat(registry.allUsernames()).containsExactlyInAnyOrder("alice", "bob");
     }
 
     @Test
-    void allEntriesShouldReflectCurrentRegistrations() {
-        registry.register("alice", session);
-        registry.register("bob", mock(WebSocketSession.class));
+    void unregisteringAnUnknownUserShouldBeANoOp() {
+        registry.unregister("ghost");
 
-        assertThat(registry.allEntries()).hasSize(2);
+        assertThat(registry.size()).isZero();
     }
 }

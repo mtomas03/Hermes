@@ -24,7 +24,6 @@ class MessageAckProducerTest {
 
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
-
     @Mock
     private ObjectMapper objectMapper;
 
@@ -38,10 +37,7 @@ class MessageAckProducerTest {
     @Test
     void publishAckSuccess() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent ackEvent = new MessageAckEvent(
-                messageId, "alice-bob",
-                "alice", "bob", 1L
-        );
+        MessageAckEvent ackEvent = new MessageAckEvent(messageId, "bob");
         String serializedJson = "{\"messageId\":\"" + messageId + "\",\"recipientUsername\":\"bob\"}";
 
         when(objectMapper.writeValueAsString(ackEvent)).thenReturn(serializedJson);
@@ -54,10 +50,7 @@ class MessageAckProducerTest {
     @Test
     void publishAckSerializationErrorHandledGracefully() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent ackEvent = new MessageAckEvent(
-                messageId, "alice-bob",
-                "alice", "bob", 1L
-        );
+        MessageAckEvent ackEvent = new MessageAckEvent(messageId, "bob");
 
         when(objectMapper.writeValueAsString(any()))
                 .thenThrow(new JsonProcessingException("Failed to serialize") {
@@ -71,10 +64,7 @@ class MessageAckProducerTest {
     @Test
     void publishAckKafkaSendErrorHandledGracefully() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent ackEvent = new MessageAckEvent(
-                messageId, "alice-bob",
-                "alice", "bob", 1L
-        );
+        MessageAckEvent ackEvent = new MessageAckEvent(messageId, "bob");
         String serializedJson = "{\"messageId\":\"" + messageId + "\"}";
 
         when(objectMapper.writeValueAsString(ackEvent)).thenReturn(serializedJson);

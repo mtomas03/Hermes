@@ -16,8 +16,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Authentication filter that intercepts incoming HTTP requests to populate the Spring Security context
- * when a valid JWT bearer token is present.
+ * Authentication filter that intercepts incoming HTTP requests to populate
+ * the Spring Security context when a valid JWT bearer token is present.
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {

@@ -8,9 +8,13 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.scheduling.concurrent.ConcurrentTaskScheduler;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * Spring configuration.
@@ -47,6 +51,19 @@ public class AppConfig {
         MappingJackson2MessageConverter converter = new MappingJackson2MessageConverter();
         converter.setObjectMapper(objectMapper);
         client.setMessageConverter(converter);
+        client.setTaskScheduler(new ConcurrentTaskScheduler(heartbeatScheduler()));
         return client;
+    }
+
+    /**
+     * Scheduler for STOMP heartbeats.
+     */
+    @Bean
+    public ScheduledExecutorService heartbeatScheduler() {
+        return Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "stomp-heartbeat");
+            t.setDaemon(true);
+            return t;
+        });
     }
 }

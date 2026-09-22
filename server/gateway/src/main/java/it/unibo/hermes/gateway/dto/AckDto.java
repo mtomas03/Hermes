@@ -1,4 +1,4 @@
-package it.unibo.hermes.client.dto;
+package it.unibo.hermes.gateway.dto;
 
 /**
  * Data Transfer Object representing an ACK pushed by the Gateway to the sender's STOMP

@@ -29,12 +29,7 @@ class AcknowledgementServiceTest {
     @Test
     void shouldMarkMessageAsAcknowledged() {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent event = new MessageAckEvent(
-                messageId,
-                "alice-bob",
-                "alice", "bob",
-                1L
-        );
+        MessageAckEvent event = new MessageAckEvent(messageId, "bob");
 
         ackService.processAcknowledgement(event);
 

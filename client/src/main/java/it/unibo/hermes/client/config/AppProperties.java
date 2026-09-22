@@ -51,6 +51,15 @@ public class AppProperties {
     @Value("${hermes.stomp.send.message:/app/chat.sendMessage}")
     private String stompSendDestination;
 
+    @Value("${hermes.stomp.send.ack:/app/chat.ack}")
+    private String stompSendAckDestination;
+
+    @Value("${hermes.stomp.subscribe.errors:/user/queue/errors}")
+    private String stompErrorsDestination;
+
+    @Value("${hermes.stomp.subscribe.system:/user/queue/system}")
+    private String stompSystemDestination;
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -105,5 +114,17 @@ public class AppProperties {
 
     public String getStompSendDestination() {
         return stompSendDestination;
+    }
+
+    public String getStompSendAckDestination() {
+        return stompSendAckDestination;
+    }
+
+    public String getStompErrorsDestination() {
+        return stompErrorsDestination;
+    }
+
+    public String getStompSystemDestination() {
+        return stompSystemDestination;
     }
 }

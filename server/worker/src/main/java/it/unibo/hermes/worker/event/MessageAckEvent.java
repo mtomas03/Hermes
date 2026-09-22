@@ -3,23 +3,15 @@ package it.unibo.hermes.worker.event;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 /**
- * Represents an event produced by the Gateway when a recipient's WebSocket session
- * sends an explicit delivery acknowledgement.
- *
- * <p>Events of this type are consumed from the {@code message-acknowledged} Kafka topic.
+ * Event produced by the Gateway to the Kafka {@code message-acknowledged} topic
+ * when a recipient's client sends an ACK over STOMP, once the message has been received
+ * and persisted locally.
  *
  * @param messageId         the unique identifier of the acknowledged message
- * @param conversationId    the unique identifier of the target conversation
- * @param senderUsername    the username of the message sender
- * @param recipientUsername the username of the recipient confirming message delivery
- * @param logicalTimestamp  the logical timestamp assigned for causal message ordering
+ * @param recipientUsername the authenticated username of the recipient confirming delivery
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MessageAckEvent(
         String messageId,
-        String conversationId,
-        String senderUsername,
-        String recipientUsername,
-        Long logicalTimestamp
-) {
-}
+        String recipientUsername
+) {}

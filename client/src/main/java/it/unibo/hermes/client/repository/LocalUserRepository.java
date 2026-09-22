@@ -16,12 +16,17 @@ public class LocalUserRepository {
 
     private static final Logger log = LoggerFactory.getLogger(LocalUserRepository.class);
 
-    private final DatabaseInitializer db;
+    private final SQLiteDatabaseConnection db;
 
-    public LocalUserRepository(DatabaseInitializer db) {
+    public LocalUserRepository(SQLiteDatabaseConnection db) {
         this.db = db;
     }
 
+    /**
+     * Saves the given user to the local database.
+     *
+     * @param user  the user to save
+     */
     public void save(User user) {
         String sql = "INSERT OR REPLACE INTO user (username) VALUES (?)";
         try (Connection conn = db.getDataSource().getConnection();
@@ -33,6 +38,11 @@ public class LocalUserRepository {
         }
     }
 
+    /**
+     * Retrieves the first user from the local database, if any.
+     *
+     * @return an Optional containing the first user, or empty if none found
+     */
     public Optional<User> findFirst() {
         try (Connection conn = db.getDataSource().getConnection();
              Statement stmt = conn.createStatement();
@@ -46,6 +56,9 @@ public class LocalUserRepository {
         return Optional.empty();
     }
 
+    /**
+     * Clears all users from the local database.
+     */
     public void clear() {
         try (Connection conn = db.getDataSource().getConnection();
              Statement stmt = conn.createStatement()) {

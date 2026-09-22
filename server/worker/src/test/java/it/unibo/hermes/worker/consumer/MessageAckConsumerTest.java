@@ -46,13 +46,7 @@ class MessageAckConsumerTest {
     @Test
     void shouldDeserializeAndForwardValidEventToAcknowledgementService() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent expectedEvent = new MessageAckEvent(
-                messageId,
-                "alice-bob",
-                "alice",
-                "bob",
-                1L
-        );
+        MessageAckEvent expectedEvent = new MessageAckEvent(messageId, "bob");
         String jsonPayload = objectMapper.writeValueAsString(expectedEvent);
 
         consumer.consume(createRecord(jsonPayload));
@@ -61,10 +55,7 @@ class MessageAckConsumerTest {
         verify(acknowledgementService).processAcknowledgement(captor.capture());
         MessageAckEvent actualEvent = captor.getValue();
         assertThat(actualEvent.messageId()).isEqualTo(messageId);
-        assertThat(actualEvent.conversationId()).isEqualTo("alice-bob");
-        assertThat(actualEvent.senderUsername()).isEqualTo("alice");
         assertThat(actualEvent.recipientUsername()).isEqualTo("bob");
-        assertThat(actualEvent.logicalTimestamp()).isEqualTo(1L);
     }
 
     @Test

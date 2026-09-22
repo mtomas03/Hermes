@@ -1,6 +1,8 @@
 package it.unibo.hermes.gateway.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import it.unibo.hermes.gateway.domain.MessageStatus;
+import it.unibo.hermes.gateway.dto.MessageFromGatewayDto;
 import it.unibo.hermes.gateway.event.MessageDeliveryEvent;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -8,28 +10,35 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
-
-import java.util.Optional;
 
 /**
  * Kafka consumer in Gateway for the {@code message-delivery} topic.
+ *
+ * <p>Delivery now goes through {@link SimpMessagingTemplate#convertAndSendToUser} instead of
+ * writing raw JSON directly onto a {@code WebSocketSession}: the Client subscribes over STOMP at
+ * {@code /user/queue/messages} and expects a payload shaped like its {@code InboundMessageDto},
+ * not the Worker's {@link MessageDeliveryEvent} envelope (which the raw model pushed unchanged
+ * and which carried no {@code type} discriminator the STOMP-based Client could ever have made
+ * sense of).
  */
 @Component
 public class MessageDeliveryConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(MessageDeliveryConsumer.class);
 
+    private final SimpMessagingTemplate messagingTemplate;
     private final WebSocketSessionRegistry sessionRegistry;
     private final ObjectMapper objectMapper;
     private final String currentGatewayId;
 
     public MessageDeliveryConsumer(
+            SimpMessagingTemplate messagingTemplate,
             WebSocketSessionRegistry sessionRegistry,
             ObjectMapper objectMapper,
             @Value("${hermes.gateway.instance-id:gateway-1}") String currentGatewayId) {
+        this.messagingTemplate = messagingTemplate;
         this.sessionRegistry = sessionRegistry;
         this.objectMapper = objectMapper;
         this.currentGatewayId = currentGatewayId;
@@ -45,31 +54,35 @@ public class MessageDeliveryConsumer {
 
         MessageDeliveryEvent event = deserialize(record.value());
 
-        // Process only if the message is targeted at THIS gateway instance
         if (!currentGatewayId.equals(event.gatewayId())) {
             log.trace("Skipping message {} intended for gateway {}", event.messageId(), event.gatewayId());
             return;
         }
 
-        log.info("Delivering message {} via WebSocket to recipient {}", event.messageId(), event.recipientUsername());
-
-        Optional<WebSocketSession> sessionOpt = sessionRegistry.sessionOf(event.recipientUsername());
-
-        if (sessionOpt.isPresent() && sessionOpt.get().isOpen()) {
-            WebSocketSession session = sessionOpt.get();
-            try {
-                String payload = objectMapper.writeValueAsString(event);
-                synchronized (session) {
-                    session.sendMessage(new TextMessage(payload));
-                }
-                log.debug("Message {} pushed successfully to user {}", event.messageId(), event.recipientUsername());
-            } catch (Exception e) {
-                log.error("Failed to push message {} to recipient WebSocket {}: {}",
-                        event.messageId(), event.recipientUsername(), e.getMessage());
-            }
-        } else {
-            log.warn("Recipient {} session not active on gateway {} - client may have disconnected",
+        if (!sessionRegistry.isConnected(event.recipientUsername())) {
+            log.warn("Recipient {} not connected on gateway {} - client may have disconnected",
                     event.recipientUsername(), currentGatewayId);
+            return;
+        }
+
+        log.info("Delivering message {} via STOMP to recipient {}", event.messageId(), event.recipientUsername());
+
+        MessageFromGatewayDto payload = new MessageFromGatewayDto(
+                event.messageId(),
+                event.conversationId(),
+                event.senderUsername(),
+                event.recipientUsername(),
+                event.content(),
+                event.logicalTimestamp(),
+                MessageStatus.DELIVERED.name()
+        );
+
+        try {
+            messagingTemplate.convertAndSendToUser(event.recipientUsername(), "/queue/messages", payload);
+            log.debug("Message {} pushed successfully to user {}", event.messageId(), event.recipientUsername());
+        } catch (Exception e) {
+            log.error("Failed to push message {} to recipient {}: {}",
+                    event.messageId(), event.recipientUsername(), e.getMessage());
         }
     }
 

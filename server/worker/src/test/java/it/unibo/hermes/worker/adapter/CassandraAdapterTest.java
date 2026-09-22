@@ -60,7 +60,6 @@ class CassandraAdapterTest {
 
         cassandraAdapter.persistMessage(event);
 
-        // 1. Verifica salvataggio su message_by_id
         verify(messageByIdRepository).save(argThat(byId ->
                 byId.getMessageId().equals(messageId) &&
                         byId.getConversationId().equals(event.conversationId()) &&
@@ -71,7 +70,6 @@ class CassandraAdapterTest {
                         DeliveryStatus.PENDING.name().equals(byId.getDeliveryStatus())
         ));
 
-        // 2. Verifica salvataggio su messages_by_conversation
         verify(messageByConversationRepository).save(argThat(byConv ->
                 byConv.getKey().getConversationId().equals(event.conversationId()) &&
                         byConv.getKey().getLogicalTimestamp() == 1L &&
@@ -82,14 +80,12 @@ class CassandraAdapterTest {
                         DeliveryStatus.PENDING.name().equals(byConv.getDeliveryStatus())
         ));
 
-        // 3. Verifica indicizzazione per il mittente (alice -> bob)
         verify(conversationByUserRepository).save(argThat(index ->
                 index.getUsername().equals("alice") &&
                         index.getConversationId().equals(event.conversationId()) &&
                         index.getOtherParticipant().equals("bob")
         ));
 
-        // 4. Verifica indicizzazione per il destinatario (bob -> alice)
         verify(conversationByUserRepository).save(argThat(index ->
                 index.getUsername().equals("bob") &&
                         index.getConversationId().equals(event.conversationId()) &&
@@ -162,6 +158,19 @@ class CassandraAdapterTest {
                 1L, DeliveryStatus.DELIVERED.name())));
 
         cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+
+        verify(messageByIdRepository, never()).updateDeliveryStatus(any(), any());
+        verifyNoInteractions(messageByConversationRepository);
+    }
+
+    @Test
+    void shouldIgnoreDuplicateAcknowledgedTransition() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(new MessageById(
+                id, "alice-bob", "alice", "bob", "hi",
+                1L, DeliveryStatus.ACKNOWLEDGED.name())));
+
+        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED);
 
         verify(messageByIdRepository, never()).updateDeliveryStatus(any(), any());
         verifyNoInteractions(messageByConversationRepository);

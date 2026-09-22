@@ -67,8 +67,7 @@ hermes:
 
   gateway:
     instance-id: ${GATEWAY_ID:gateway-1}
-    heartbeat-timeout-ms: ${HB_TIMEOUT_MS:90000} # 90 s without ping -> disconnect
-    heartbeat-check-ms: ${HB_CHECK_MS:30000} # check interval
+    heartbeat-check-ms: ${HB_CHECK_MS:30000} # presence TTL refresh interval
 
   kafka:
     retry:

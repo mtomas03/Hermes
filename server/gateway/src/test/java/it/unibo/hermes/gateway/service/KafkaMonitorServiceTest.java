@@ -1,21 +1,19 @@
 package it.unibo.hermes.gateway.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import it.unibo.hermes.gateway.dto.SystemMessageDto;
 import it.unibo.hermes.gateway.websocket.WebSocketSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.time.Instant;
-import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,15 +24,13 @@ class KafkaMonitorServiceTest {
     @Mock
     private WebSocketSessionRegistry registry;
     @Mock
-    private ObjectMapper objectMapper;
+    private SimpMessagingTemplate messagingTemplate;
 
     private KafkaMonitorService monitorService;
 
     @BeforeEach
-    void setUp() throws JsonProcessingException {
-        monitorService = new KafkaMonitorService(kafkaHealthProbe, registry, objectMapper);
-        lenient().when(objectMapper.writeValueAsString(any()))
-                .thenReturn("{\"type\":\"FORCE_RECONNECT\"}");
+    void setUp() {
+        monitorService = new KafkaMonitorService(kafkaHealthProbe, registry, messagingTemplate);
     }
 
     @Test
@@ -63,64 +59,38 @@ class KafkaMonitorServiceTest {
     }
 
     @Test
-    void shouldBroadcastForceReconnectWhenBackboneRecovers() throws Exception {
-        // First probe goes down, second probe recovers
+    void shouldBroadcastForceReconnectWhenBackboneRecovers() {
         when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
-        WebSocketSession session = mock(WebSocketSession.class);
-        when(session.isOpen()).thenReturn(true);
-        when(registry.allEntries()).thenReturn(
-                List.of(new WebSocketSessionRegistry.Entry("alice", session, Instant.now())));
+        when(registry.allUsernames()).thenReturn(Set.of("alice"));
 
         monitorService.checkBackbone(); // true -> false
         monitorService.checkBackbone(); // false -> true, should broadcast
 
         assertThat(monitorService.isBackboneAvailable()).isTrue();
-        verify(session).sendMessage(any(TextMessage.class));
+        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/system"), any(SystemMessageDto.class));
     }
 
     @Test
-    void shouldSkipClosedSessionsWhenBroadcasting() throws Exception {
+    void shouldNotBroadcastWhenNoUsersAreConnected() {
         when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
-        WebSocketSession closedSession = mock(WebSocketSession.class);
-        when(closedSession.isOpen()).thenReturn(false);
-        when(registry.allEntries()).thenReturn(
-                List.of(new WebSocketSessionRegistry.Entry("bob", closedSession, Instant.now())));
+        when(registry.allUsernames()).thenReturn(Set.of());
 
         monitorService.checkBackbone();
         monitorService.checkBackbone();
 
-        verify(closedSession, never()).sendMessage(any());
+        verifyNoInteractions(messagingTemplate);
     }
 
     @Test
-    void shouldContinueBroadcastingToOtherSessionsWhenOneSendFails() throws Exception {
+    void shouldContinueBroadcastingToOtherUsersWhenOneSendFails() {
         when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
-        WebSocketSession failing = mock(WebSocketSession.class);
-        WebSocketSession healthy = mock(WebSocketSession.class);
-        when(failing.isOpen()).thenReturn(true);
-        when(healthy.isOpen()).thenReturn(true);
-        doThrow(new RuntimeException("broken pipe")).when(failing).sendMessage(any());
-        when(registry.allEntries()).thenReturn(List.of(
-                new WebSocketSessionRegistry.Entry("failing-user", failing, Instant.now()),
-                new WebSocketSessionRegistry.Entry("healthy-user", healthy, Instant.now())));
+        when(registry.allUsernames()).thenReturn(Set.of("failing-user", "healthy-user"));
+        doThrow(new RuntimeException("broken pipe"))
+                .when(messagingTemplate).convertAndSendToUser(eq("failing-user"), eq("/queue/system"), any());
 
         monitorService.checkBackbone();
         monitorService.checkBackbone();
 
-        // The second session still receives its message despite the first one failing
-        verify(healthy).sendMessage(any(TextMessage.class));
-    }
-
-    @Test
-    void shouldNotBroadcastWhenSerialisationFails() throws Exception {
-        when(objectMapper.writeValueAsString(any()))
-                .thenThrow(new JsonProcessingException("boom") {
-                });
-        when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
-
-        monitorService.checkBackbone();
-        monitorService.checkBackbone();
-
-        verifyNoInteractions(registry);
+        verify(messagingTemplate).convertAndSendToUser(eq("healthy-user"), eq("/queue/system"), any(SystemMessageDto.class));
     }
 }

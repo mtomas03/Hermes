@@ -2,7 +2,9 @@ package it.unibo.hermes.client.websocket;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.AckDto;
+import it.unibo.hermes.client.dto.ErrorDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.dto.SystemMessageDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +36,8 @@ class StompSessionHandlerTest {
 
     private List<InboundMessageDto> receivedMessages;
     private List<AckDto> receivedAcks;
+    private List<ErrorDto> receivedAppErrors;
+    private List<SystemMessageDto> receivedSystemMessages;
     private boolean connectedCalled;
     private Throwable observedError;
     private boolean disconnectedCalled;
@@ -45,25 +49,34 @@ class StompSessionHandlerTest {
         AppProperties props = new AppProperties();
         ReflectionTestUtils.setField(props, "stompMessagesDestination", "/user/queue/messages");
         ReflectionTestUtils.setField(props, "stompAcksDestination", "/user/queue/acks");
+        ReflectionTestUtils.setField(props, "stompErrorsDestination", "/user/queue/errors");
+        ReflectionTestUtils.setField(props, "stompSystemDestination", "/user/queue/system");
 
         receivedMessages = new ArrayList<>();
         receivedAcks = new ArrayList<>();
+        receivedAppErrors = new ArrayList<>();
+        receivedSystemMessages = new ArrayList<>();
 
         Consumer<InboundMessageDto> onMessage = receivedMessages::add;
         Consumer<AckDto> onAck = receivedAcks::add;
+        Consumer<ErrorDto> onAppError = receivedAppErrors::add;
+        Consumer<SystemMessageDto> onSystemMessage = receivedSystemMessages::add;
         Runnable onConnected = () -> connectedCalled = true;
         Consumer<Throwable> onError = e -> observedError = e;
         Runnable onDisconnected = () -> disconnectedCalled = true;
 
-        handler = new StompSessionHandler(props, onMessage, onAck, onConnected, onError, onDisconnected);
+        handler = new StompSessionHandler(props, onMessage, onAck, onAppError, onSystemMessage,
+                onConnected, onError, onDisconnected);
     }
 
     @Test
-    void shouldSubscribeToMessagesAndAcksDestinationsOnConnect() {
+    void shouldSubscribeToAllFourDestinationsOnConnect() {
         handler.afterConnected(session, headers);
 
         verify(session).subscribe(eq("/user/queue/messages"), any(StompFrameHandler.class));
         verify(session).subscribe(eq("/user/queue/acks"), any(StompFrameHandler.class));
+        verify(session).subscribe(eq("/user/queue/errors"), any(StompFrameHandler.class));
+        verify(session).subscribe(eq("/user/queue/system"), any(StompFrameHandler.class));
     }
 
     @Test
@@ -101,6 +114,38 @@ class StompSessionHandlerTest {
 
         assertEquals(1, receivedAcks.size());
         assertEquals("m1", receivedAcks.getFirst().messageId());
+    }
+
+    @Test
+    void shouldDispatchErrorFrameToOnAppErrorCallback() {
+        handler.afterConnected(session, headers);
+        ArgumentCaptor<StompFrameHandler> captor = ArgumentCaptor.forClass(StompFrameHandler.class);
+        verify(session).subscribe(eq("/user/queue/errors"), captor.capture());
+        StompFrameHandler errorFrameHandler = captor.getValue();
+        ErrorDto err = new ErrorDto(
+                "MISSING_RECIPIENT",
+                "Field 'recipientUsername' is required",
+                "m1");
+
+        errorFrameHandler.handleFrame(headers, err);
+
+        assertEquals(1, receivedAppErrors.size());
+        assertEquals("MISSING_RECIPIENT", receivedAppErrors.getFirst().code());
+    }
+
+    @Test
+    void shouldDispatchSystemFrameToOnSystemMessageCallback() {
+        handler.afterConnected(session, headers);
+        ArgumentCaptor<StompFrameHandler> captor = ArgumentCaptor.forClass(StompFrameHandler.class);
+        verify(session).subscribe(eq("/user/queue/system"), captor.capture());
+        StompFrameHandler systemFrameHandler = captor.getValue();
+        SystemMessageDto msg = new SystemMessageDto(
+                "FORCE_RECONNECT", "BACKBONE_RECOVERED");
+
+        systemFrameHandler.handleFrame(headers, msg);
+
+        assertEquals(1, receivedSystemMessages.size());
+        assertEquals("FORCE_RECONNECT", receivedSystemMessages.getFirst().type());
     }
 
     @Test
