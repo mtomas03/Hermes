@@ -15,6 +15,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,7 +45,7 @@ class MessageAckProducerTest {
         producer.publishAck(ackEvent);
 
         verify(objectMapper).writeValueAsString(ackEvent);
-        verify(kafkaTemplate).send(ACK_TOPIC, "bob", serializedJson);
+        verify(kafkaTemplate).send(ACK_TOPIC, messageId, serializedJson);
     }
 
     @Test
@@ -73,6 +74,6 @@ class MessageAckProducerTest {
 
         assertThatCode(() -> producer.publishAck(ackEvent))
                 .doesNotThrowAnyException();
-        verify(kafkaTemplate).send(ACK_TOPIC, "bob", serializedJson);
+        verify(kafkaTemplate).send(ACK_TOPIC, messageId, serializedJson);
     }
 }

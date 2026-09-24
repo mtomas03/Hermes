@@ -37,7 +37,7 @@ public class MessageAckProducer {
     public void publishAck(MessageAckEvent ackEvent) {
         try {
             String payload = objectMapper.writeValueAsString(ackEvent);
-            kafkaTemplate.send(ackTopic, ackEvent.recipientUsername(), payload);
+            kafkaTemplate.send(ackTopic, ackEvent.messageId(), payload);
             log.info("Published MessageAckEvent for message {} from recipient {}",
                     ackEvent.messageId(), ackEvent.recipientUsername());
         } catch (Exception e) {

@@ -15,13 +15,6 @@ import org.springframework.stereotype.Component;
 
 /**
  * Kafka consumer in Gateway for the {@code message-delivery} topic.
- *
- * <p>Delivery now goes through {@link SimpMessagingTemplate#convertAndSendToUser} instead of
- * writing raw JSON directly onto a {@code WebSocketSession}: the Client subscribes over STOMP at
- * {@code /user/queue/messages} and expects a payload shaped like its {@code InboundMessageDto},
- * not the Worker's {@link MessageDeliveryEvent} envelope (which the raw model pushed unchanged
- * and which carried no {@code type} discriminator the STOMP-based Client could ever have made
- * sense of).
  */
 @Component
 public class MessageDeliveryConsumer {
