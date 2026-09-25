@@ -33,9 +33,9 @@ class PresenceServiceTest {
 
     @Test
     void shouldMarkUserOffline() {
-        service.setOffline("alice");
+        service.setOffline("alice", "gateway-1");
 
-        verify(presenceAdapter).setOffline("alice");
+        verify(presenceAdapter).setOffline("alice", "gateway-1");
     }
 
     @Test

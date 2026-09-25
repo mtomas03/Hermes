@@ -16,6 +16,7 @@ import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
 import static org.mockito.Mockito.*;
+import static org.springframework.web.socket.CloseStatus.NORMAL;
 
 @ExtendWith(MockitoExtension.class)
 class PresenceEventListenerTest {
@@ -64,18 +65,18 @@ class PresenceEventListenerTest {
     @Test
     void shouldUnregisterAndMarkOfflineOnSessionDisconnect() {
         SessionDisconnectEvent event = new SessionDisconnectEvent(this, authenticatedMessage(),
-                "session-1", org.springframework.web.socket.CloseStatus.NORMAL, new StompPrincipal("alice"));
+                "session-1", NORMAL, new StompPrincipal("alice"));
 
         listener.onSessionDisconnect(event);
 
         verify(registry).unregister("alice");
-        verify(presenceService).setOffline("alice");
+        verify(presenceService).setOffline("alice", "gateway-1");
     }
 
     @Test
     void shouldIgnoreDisconnectEventWithNoPrincipal() {
         SessionDisconnectEvent event = new SessionDisconnectEvent(this, authenticatedMessage(),
-                "session-1", org.springframework.web.socket.CloseStatus.NORMAL, null);
+                "session-1", NORMAL, null);
 
         listener.onSessionDisconnect(event);
 

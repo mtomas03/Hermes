@@ -38,11 +38,12 @@ public class PresenceService {
     /**
      * Marks a user as offline in Redis and removes associated gateway routing information.
      *
-     * @param username the username of the disconnecting client
+     * @param username  the username of the disconnecting client
+     * @param gatewayId the unique identifier of the gateway that was hosting the active session
      */
-    public void setOffline(String username) {
-        presenceAdapter.setOffline(username);
-        log.debug("User '{}' marked OFFLINE", username);
+    public void setOffline(String username, String gatewayId) {
+        presenceAdapter.setOffline(username, gatewayId);
+        log.debug("User '{}' marked OFFLINE on gateway '{}'", username, gatewayId);
     }
 
     /**

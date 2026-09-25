@@ -3,11 +3,14 @@ package it.unibo.hermes.gateway.adapter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -67,16 +70,22 @@ class RedisPresenceAdapterTest {
 
     @Test
     void setOfflineSuccess() {
-        adapter.setOffline("alice");
+        adapter.setOffline("alice", "gateway-1");
 
-        verify(redis).delete("hermes:presence:alice");
+        verify(redis).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("hermes:presence:alice")),
+                eq("gatewayId"),
+                eq("gateway-1")
+        );
     }
 
     @Test
     void setOfflineRedisException() {
-        when(redis.delete(anyString())).thenThrow(new RuntimeException("Redis connection error"));
+        when(redis.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), any(), any()))
+                .thenThrow(new RuntimeException("Redis connection error"));
 
-        assertThatCode(() -> adapter.setOffline("alice"))
+        assertThatCode(() -> adapter.setOffline("alice", "gateway-1"))
                 .doesNotThrowAnyException();
     }
 
