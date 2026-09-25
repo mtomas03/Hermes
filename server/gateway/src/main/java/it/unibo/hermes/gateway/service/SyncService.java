@@ -64,15 +64,14 @@ public class SyncService {
     }
 
     /**
-     * Verifies that the requesting user is an authorised participant in the conversation identifier.
+     * Verifies that the requesting user is an authorised participant in the conversation.
      *
      * @param username       the username to validate
      * @param conversationId the conversation identifier
      * @throws AccessDeniedException if the user is not one of the conversation participants
      */
     private void validateParticipant(String username, String conversationId) {
-        String[] parts = conversationId.split("-", 2);
-        if (parts.length != 2 || (!parts[0].equals(username) && !parts[1].equals(username))) {
+        if (!cassandraAdapter.isParticipant(username, conversationId)) {
             throw new AccessDeniedException(
                     "User '" + username + "' is not a participant of conversation '" + conversationId + "'");
         }

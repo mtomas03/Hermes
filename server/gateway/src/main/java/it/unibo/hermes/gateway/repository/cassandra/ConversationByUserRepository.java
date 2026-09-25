@@ -15,8 +15,17 @@ public interface ConversationByUserRepository extends CassandraRepository<Conver
     /**
      * Finds all conversations associated with a specific username.
      *
-     * @param username      the username to search for
+     * @param username the username to search for
      * @return a list of ConversationByUser entities associated with the given username
      */
     List<ConversationByUser> findByUsername(String username);
+
+    /**
+     * Checks if a user is a participant in a given conversation.
+     *
+     * @param username       the username to search for
+     * @param conversationId the conversation identifier
+     * @return {@code true} if a record exists, {@code false} otherwise
+     */
+    boolean existsByUsernameAndConversationId(String username, String conversationId);
 }

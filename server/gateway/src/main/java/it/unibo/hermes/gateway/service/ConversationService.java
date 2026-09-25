@@ -1,22 +1,31 @@
 package it.unibo.hermes.gateway.service;
 
+import it.unibo.hermes.gateway.adapter.CassandraAdapter;
 import it.unibo.hermes.gateway.dto.ConversationDto;
-import it.unibo.hermes.gateway.repository.cassandra.ConversationByUserRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+/**
+ * Service class for managing conversations.
+ */
 @Service
 public class ConversationService {
 
-    private final ConversationByUserRepository conversationRepository;
+    private final CassandraAdapter cassandraAdapter;
 
-    public ConversationService(ConversationByUserRepository conversationRepository) {
-        this.conversationRepository = conversationRepository;
+    public ConversationService(CassandraAdapter cassandraAdapter) {
+        this.cassandraAdapter = cassandraAdapter;
     }
 
+    /**
+     * Retrieves a list of conversations for the specified user.
+     *
+     * @param currentUsername the username of the current user
+     * @return a list of ConversationDto representing the user's conversations
+     */
     public List<ConversationDto> getUserConversations(String currentUsername) {
-        return conversationRepository.findByUsername(currentUsername)
+        return cassandraAdapter.findConversationsByUsername(currentUsername)
                 .stream()
                 .map(conv -> new ConversationDto(
                         conv.getConversationId(),
