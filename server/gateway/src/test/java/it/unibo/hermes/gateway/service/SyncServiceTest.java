@@ -34,6 +34,8 @@ class SyncServiceTest {
 
     @Test
     void shouldRejectSyncForNonParticipant() {
+        when(cassandraAdapter.isParticipant("carol", "alice-bob")).thenReturn(false);
+
         assertThatThrownBy(() -> syncService.syncConversation("carol", "alice-bob"))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageContaining("User 'carol' is not a participant");
@@ -43,6 +45,8 @@ class SyncServiceTest {
 
     @Test
     void shouldFetchFullHistoryForAuthorizedParticipant() {
+        when(cassandraAdapter.isParticipant("alice", "alice-bob")).thenReturn(true);
+
         MessageByConversation msg1 = new MessageByConversation(
                 UUID.randomUUID(), "alice-bob", "alice", "bob",
                 "Hello Bob!", 1L, MessageStatus.DELIVERED);
@@ -62,12 +66,12 @@ class SyncServiceTest {
 
     @Test
     void shouldMapMessageFieldsIntoResponseDto() {
+        when(cassandraAdapter.isParticipant("alice", "alice-bob")).thenReturn(true);
         UUID messageId = UUID.randomUUID();
         MessageByConversation msg = new MessageByConversation(
                 messageId,
                 "alice-bob", "alice", "bob",
                 "hi", 2L, MessageStatus.STORED);
-
         when(cassandraAdapter.findAllMessages("alice-bob")).thenReturn(List.of(msg));
 
         SyncResponseDto response = syncService.syncConversation("alice", "alice-bob");

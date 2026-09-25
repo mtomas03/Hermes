@@ -1,8 +1,10 @@
 package it.unibo.hermes.gateway.adapter;
 
 import it.unibo.hermes.gateway.domain.MessageStatus;
+import it.unibo.hermes.gateway.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
 import it.unibo.hermes.gateway.entity.cassandra.MessageById;
+import it.unibo.hermes.gateway.repository.cassandra.ConversationByUserRepository;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByConversationRepository;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByIdRepository;
 import org.junit.jupiter.api.Test;
@@ -28,8 +30,32 @@ class CassandraAdapterTest {
     @Mock
     private MessageByIdRepository messageByIdRepository;
 
+    @Mock
+    private ConversationByUserRepository conversationByUserRepository;
+
     @InjectMocks
     private CassandraAdapter cassandraAdapter;
+
+    @Test
+    void shouldFindConversationsByUsername() {
+        ConversationByUser conv = new ConversationByUser("alice", "alice-bob", "bob");
+        when(conversationByUserRepository.findByUsername("alice")).thenReturn(List.of(conv));
+
+        List<ConversationByUser> result = cassandraAdapter.findConversationsByUsername("alice");
+
+        assertThat(result).containsExactly(conv);
+        verify(conversationByUserRepository).findByUsername("alice");
+    }
+
+    @Test
+    void shouldCheckIfUserIsParticipant() {
+        when(conversationByUserRepository.existsByUsernameAndConversationId("alice", "alice-bob")).thenReturn(true);
+
+        boolean isParticipant = cassandraAdapter.isParticipant("alice", "alice-bob");
+
+        assertThat(isParticipant).isTrue();
+        verify(conversationByUserRepository).existsByUsernameAndConversationId("alice", "alice-bob");
+    }
 
     @Test
     void shouldSaveToBothRepositories() {
