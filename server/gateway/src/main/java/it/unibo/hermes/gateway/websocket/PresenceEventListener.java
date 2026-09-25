@@ -69,7 +69,7 @@ public class PresenceEventListener {
             return;
         }
         registry.unregister(username);
-        presenceService.setOffline(username);
+        presenceService.setOffline(username, gatewayInstanceId);
         log.info("STOMP session closed for user '{}' - status: {}", username, event.getCloseStatus());
     }
 

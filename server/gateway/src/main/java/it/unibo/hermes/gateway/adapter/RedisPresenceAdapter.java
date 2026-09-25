@@ -4,8 +4,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -16,6 +19,15 @@ import java.util.concurrent.TimeUnit;
 public class RedisPresenceAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(RedisPresenceAdapter.class);
+
+    private static final RedisScript<Long> DELETE_IF_GATEWAY_MATCH_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then " +
+                    "return redis.call('DEL', KEYS[1]) " +
+                    "else " +
+                    "return 0 " +
+                    "end",
+            Long.class
+    );
 
     private final StringRedisTemplate redis;
     private final String keyPrefix;
@@ -57,14 +69,26 @@ public class RedisPresenceAdapter {
     }
 
     /**
-     * Deletes the user presence hash upon session disconnection.
+     * Deletes the user presence hash upon session disconnection,
+     * only if the record is assigned to the specified gateway.
      *
-     * @param username the username of the user
+     * @param username  the username of the user
+     * @param gatewayId the unique identifier of the gateway that was hosting the active session
      */
-    public void setOffline(String username) {
+    public void setOffline(String username, String gatewayId) {
         try {
-            redis.delete(presenceKey(username));
-            log.debug("Set presence OFFLINE for user '{}'", username);
+            String key = presenceKey(username);
+            Long result = redis.execute(
+                    DELETE_IF_GATEWAY_MATCH_SCRIPT,
+                    Collections.singletonList(key),
+                    fieldGatewayId,
+                    gatewayId
+            );
+            if (Long.valueOf(1L).equals(result)) {
+                log.debug("Set presence OFFLINE for user '{}' on gateway '{}'", username, gatewayId);
+            } else {
+                log.debug("Skipped setting OFFLINE for user '{}' on gateway '{}' (session active on another gateway)", username, gatewayId);
+            }
         } catch (Exception e) {
             log.warn("Redis unavailable - could not set OFFLINE for '{}': {}", username, e.getMessage());
         }
