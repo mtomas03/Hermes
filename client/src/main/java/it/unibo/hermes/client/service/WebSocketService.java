@@ -157,4 +157,14 @@ public class WebSocketService {
             s.disconnect();
         }
     }
+
+    /**
+     * Tells whether the underlying STOMP session is currently open.
+     *
+     * @return {@code true} if there is an active, connected STOMP session
+     */
+    public boolean isConnected() {
+        StompSession s = session.get();
+        return s != null && s.isConnected();
+    }
 }
