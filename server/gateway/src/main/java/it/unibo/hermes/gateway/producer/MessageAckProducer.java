@@ -16,12 +16,12 @@ public class MessageAckProducer {
 
     private static final Logger log = LoggerFactory.getLogger(MessageAckProducer.class);
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final String ackTopic;
 
     public MessageAckProducer(
-            KafkaTemplate<String, Object> kafkaTemplate,
+            KafkaTemplate<String, String> kafkaTemplate,
             ObjectMapper objectMapper,
             @Value("${hermes.topics.message-acknowledged:message-acknowledged}") String ackTopic) {
         this.kafkaTemplate = kafkaTemplate;
