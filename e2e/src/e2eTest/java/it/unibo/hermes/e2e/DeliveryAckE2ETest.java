@@ -11,12 +11,13 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Delivery ACK tests.
+ * End-to-End test suite for message delivery acknowledgements.
  *
- * <p> Verifies the full ACK loop: B receives and locally persists the message, B's Client sends a
- * STOMP delivery ACK, the Gateway turns it into a {@code MessageAck} Kafka event carrying the
- * authenticated recipient identity, the Worker consumes it
- * and Cassandra's delivery state transitions to {@code ACKNOWLEDGED}.
+ * <p> Verifies the full acknowledgement lifecycle. Ensures that when a recipient (B)
+ * receives and locally persists a message via STOMP, the Client correctly generates a Delivery ACK.
+ * This ACK must be ingested by the Gateway as a Kafka {@code MessageAck} event tied to the
+ * authenticated recipient's identity, consumed by the Worker, and finally persisted in Cassandra,
+ * transitioning the server-side state to {@code ACKNOWLEDGED}.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class DeliveryAckE2ETest {

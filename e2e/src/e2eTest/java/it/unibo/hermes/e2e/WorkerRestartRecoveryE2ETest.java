@@ -11,11 +11,13 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Worker failure and recovery test.
+ * End-to-End test suite for backend Worker failure and recovery.
  *
- * <p> Sends a message, then forces a restart of the Worker while the message is mid-processing
- * and verifies the system recovers: the message is not lost
- * and eventually reaches {@code ACKNOWLEDGED} once the Worker is back.
+ * <p> Tests system resilience by intentionally forcing a Kubernetes rolling restart of the
+ * {@code worker} while a message is in transit. Verifies that the system recovers
+ * gracefully: the message must not be lost, Kafka consumer group rebalancing must succeed,
+ * idempotent processing must handle any redeliveries and the message must eventually reach
+ * the {@code ACKNOWLEDGED} state.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class WorkerRestartRecoveryE2ETest {

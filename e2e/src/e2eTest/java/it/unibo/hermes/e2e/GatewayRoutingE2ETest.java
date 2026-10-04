@@ -13,11 +13,11 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Gateway Routing test
+ * End-to-End test suite for multi-replica Gateway routing and load balancing.
  *
- * <p> The load balancer decides, non-deterministically, which replica actually serves
- * each of A's and B's connections. Connecting several independent client pairs increases the empirical
- * chance that at least one pair is served by two different replicas.
+ * <p> Validates that the system functions correctly when deployed with multiple Gateway
+ * replicas situated behind a load-balancing Ingress. This test spawns multiple independent
+ * client pairs to increase the probability of cross-replica communication.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class GatewayRoutingE2ETest {

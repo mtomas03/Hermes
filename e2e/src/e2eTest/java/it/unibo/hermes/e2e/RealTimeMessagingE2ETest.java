@@ -11,8 +11,12 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * This test class contains e2e tests
- * for real-time messaging between two users.
+ * End-to-End test suite for real-time one-to-one messaging.
+ *
+ * <p> Exercises the core messaging loop between two simultaneously connected online users.
+ * Verifies that a message sent by A successfully traverses the entire distributed backbone
+ * (Gateway -> Kafka MessageCreated -> Worker -> Cassandra -> Kafka DeliveryMessage -> Gateway -> STOMP)
+ * and is durably persisted in B's local SQLite database, rather than merely being accepted by the ingress.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class RealTimeMessagingE2ETest {

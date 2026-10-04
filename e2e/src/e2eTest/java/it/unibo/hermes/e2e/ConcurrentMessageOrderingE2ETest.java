@@ -17,11 +17,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Concurrent message ordering test.
+ * End-to-End test suite for concurrent message ordering.
  *
- * <p> Sends several messages from A to B in rapid succession and verifies all of them eventually
- * arrive with distinct ids, no duplicates and in a deterministic order:
- * {@code logical_timestamp} then {@code message_id} as a tie-breaker.
+ * <p> Exercises the system's behaviour when a client sends a rapid burst of messages to the same
+ * recipient. Verifies that all messages are reliably delivered exactly once, without duplication,
+ * and that their final persisted state reflects a deterministic ordering.
+ *
+ * <p> Ordering is determined by the {@code logical_timestamp}, falling back to {@code message_id}
+ * as a deterministic tie-breaker if timestamps collide, ensuring consistent ordering
+ * across distributed clients without relying on Kafka's ordering alone.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class ConcurrentMessageOrderingE2ETest {

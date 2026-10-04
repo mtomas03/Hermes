@@ -13,10 +13,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * WebSocket disconnect / reconnect test.
+ * End-to-End test suite for WebSocket disconnection and reconnection.
  *
- * <p> Unlike {@link FullSyncE2ETest}, this test scenario connects B first,
- * disconnects it explicitly, sends while disconnected, then reconnects and synchronises.
+ * <p> Validates system resilience against temporary client disconnections. Unlike {@link FullSyncE2ETest},
+ * this test forces an active WebSocket session to drop, sends a message when the session is down
+ * and verifies that, upon reconnection and synchronisation, the client recovers the missed message. It ensures that
+ * outdated presence or routing records from the terminated session do not permanently compromise message delivery.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class WebsocketReconnectE2ETest {

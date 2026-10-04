@@ -12,8 +12,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * This test class contains e2e tests
- * for user registration and authentication.
+ * End-to-End test suite for user registration and authentication.
+ *
+ * <p> Verifies that the PostgreSQL-based REST authentication mechanism is working properly.
+ * Verifies the successful creation of new accounts, successful login yielding a valid JWT
+ * and the authorisation of protected endpoints. Also tests negative security paths,
+ * ensuring the Gateway correctly rejects invalid credentials and blocks access
+ * when a bearer token is missing or malformed.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class RegistrationAndAuthenticationE2ETest {

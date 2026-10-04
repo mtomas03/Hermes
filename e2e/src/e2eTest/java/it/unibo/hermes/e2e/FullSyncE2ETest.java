@@ -15,10 +15,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Full synchronisation test.
+ * End-to-End test suite for offline message delivery and full synchronisation.
  *
- * <p> B never connects over STOMP while A's message is sent. The message must still survive
- * and once B does connect and performs the full synchronisation, it must recover the message exactly once.
+ * <p> Exercises the offline delivery path: ensures that a message sent to a completely disconnected
+ * recipient is durably persisted by the backend (Worker/Cassandra). When the recipient subsequently
+ * connects and performs a Full Conversation Sync via the REST API, the message must be reliably
+ * recovered and inserted into the client's local persistence exactly once.
  */
 @ExtendWith({MinikubeReadiness.class, DiagnosticsCollector.class})
 class FullSyncE2ETest {
