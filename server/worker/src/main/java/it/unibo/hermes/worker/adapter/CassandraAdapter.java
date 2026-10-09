@@ -15,7 +15,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,7 +41,7 @@ public class CassandraAdapter {
     }
 
     @NonNull
-    private static MessageByConversation getByConversation(MessageEvent event, UUID messageId, Instant physicalTimestamp) {
+    private static MessageByConversation getByConversation(MessageEvent event, UUID messageId) {
         MessageByConversationPrimaryKey key = new MessageByConversationPrimaryKey(
                 event.conversationId(),
                 event.logicalTimestamp(),
@@ -53,8 +52,7 @@ public class CassandraAdapter {
                 event.senderUsername(),
                 event.recipientUsername(),
                 event.content(),
-                DeliveryStatus.PENDING.name(),
-                physicalTimestamp
+                DeliveryStatus.PENDING.name()
         );
     }
 
@@ -64,7 +62,6 @@ public class CassandraAdapter {
      */
     public void persistMessage(MessageEvent event) {
         UUID messageId = UUID.fromString(event.messageId());
-        Instant physicalTimestamp = Instant.now();
 
         try {
             Optional<MessageById> existing = messageByIdRepository.findById(messageId);
@@ -74,7 +71,21 @@ public class CassandraAdapter {
                 return;
             }
 
-            MessageById byId = new MessageById(
+            conversationMessageRepository.save(getByConversation(event, messageId));
+
+            conversationByUserRepository.save(new ConversationByUser(
+                    event.senderUsername(),
+                    event.conversationId(),
+                    event.recipientUsername()
+            ));
+
+            conversationByUserRepository.save(new ConversationByUser(
+                    event.recipientUsername(),
+                    event.conversationId(),
+                    event.senderUsername()
+            ));
+
+            messageByIdRepository.save(new MessageById(
                     messageId,
                     event.conversationId(),
                     event.senderUsername(),
@@ -82,25 +93,7 @@ public class CassandraAdapter {
                     event.content(),
                     event.logicalTimestamp(),
                     DeliveryStatus.PENDING.name()
-            );
-            messageByIdRepository.save(byId);
-
-            MessageByConversation byConversation = getByConversation(event, messageId, physicalTimestamp);
-            conversationMessageRepository.save(byConversation);
-
-            ConversationByUser senderIndex = new ConversationByUser(
-                    event.senderUsername(),
-                    event.conversationId(),
-                    event.recipientUsername()
-            );
-            conversationByUserRepository.save(senderIndex);
-
-            ConversationByUser recipientIndex = new ConversationByUser(
-                    event.recipientUsername(),
-                    event.conversationId(),
-                    event.senderUsername()
-            );
-            conversationByUserRepository.save(recipientIndex);
+            ));
 
             log.debug("Message {} persisted and conversation indexed for {} and {}",
                     messageId, event.senderUsername(), event.recipientUsername());

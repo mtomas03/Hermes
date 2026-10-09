@@ -1,5 +1,7 @@
 package it.unibo.hermes.e2e.support;
 
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -57,15 +59,17 @@ public final class Poller {
                     return result.get();
                 }
             } catch (Exception e) {
+                failFastOnServerError(e, description);
                 lastError = e;
             }
             sleepQuietly(interval);
         }
 
-        String message = "Timed out after " + timeout + " (" + attempts + " attempts) waiting for: "
+        String message = "Timed out after " + attempts + " attempts waiting for: "
                 + description;
         if (lastError != null) {
-            throw new AssertionError(message + " - last error: " + lastError, lastError);
+            throw new AssertionError(message + " - last error: "
+                    + describe(lastError), lastError);
         }
         throw new AssertionError(message);
     }
@@ -82,6 +86,41 @@ public final class Poller {
     public static void pollUntilTrue(Supplier<Boolean> condition, Duration timeout, String description) {
         pollUntil(() -> Boolean.TRUE.equals(condition.get()) ? Optional.of(true) : Optional.empty(),
                 timeout, description);
+    }
+
+    private static void failFastOnServerError(Throwable error, String description) {
+        WebClientResponseException http = findHttpError(error);
+        if (http == null) {
+            return;
+        }
+        int status = http.getStatusCode().value();
+        boolean retryable = switch (status) {
+            case 403, 404, 408, 425, 429, 502, 503, 504 -> true;
+            default -> status < 400;
+        };
+        if (!retryable) {
+            throw new AssertionError("HTTP error while waiting for: " + description + " - " + describe(http), http);
+        }
+    }
+
+    private static WebClientResponseException findHttpError(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (t instanceof WebClientResponseException http) {
+                return http;
+            }
+        }
+        return null;
+    }
+
+    private static String describe(Throwable error) {
+        WebClientResponseException http = findHttpError(error);
+        if (http == null) {
+            return String.valueOf(error);
+        }
+        return "HTTP " + http.getStatusCode().value() + " "
+                + (http.getRequest() != null ? http.getRequest().getMethod()
+                + " " + http.getRequest().getURI() : "")
+                + " - body: " + http.getResponseBodyAsString();
     }
 
     private static void sleepQuietly(Duration interval) {
