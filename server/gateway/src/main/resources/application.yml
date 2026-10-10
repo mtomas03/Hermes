@@ -47,6 +47,7 @@ spring:
       properties:
         delivery.timeout.ms: 5000
         request.timeout.ms: 3000
+        max.block.ms: 3000
     consumer:
       group-id: hermes-gateway
       auto-offset-reset: earliest

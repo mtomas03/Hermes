@@ -85,6 +85,17 @@ class KafkaOutageRecoveryE2ETest {
                         + " through full synchronization");
         assertTrue(bob.findLocalMessage(conversationId, messageId).isPresent());
 
+        Poller.pollUntil(
+                () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
+                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
+                KAFKA_TIMEOUT, "recovered message " + messageId + " to be ACKNOWLEDGED server-side");
+
+        bob.syncAndPersist(conversationId, TIMEOUT);
+        assertEquals(1, bob.localMessages(conversationId).stream()
+                .filter(m -> m.getMessageId().equals(messageId)).count(), "no local duplicates after re-sync");
+        assertEquals(ACKNOWLEDGED, alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
+                .orElseThrow().messageStatus(), "re-sync must not regress the acknowledged state");
+
         String afterId = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("afterRecovery"));
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, afterId), KAFKA_TIMEOUT,
                 "real-time delivery of " + afterId + " after Kafka recovered");
