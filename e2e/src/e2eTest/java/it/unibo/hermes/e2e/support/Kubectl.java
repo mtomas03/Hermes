@@ -27,7 +27,33 @@ public final class Kubectl {
                 "--timeout=" + timeout.toSeconds() + "s");
     }
 
-    private static void run(Duration timeout, String... command) {
+    /**
+     * Scales a StatefulSet and waits until the change is observable:
+     * for {@code replicas == 0} until no pod labelled {@code app=<appLabel>} is left,
+     * otherwise until the rollout is complete.
+     *
+     * @param statefulSet the StatefulSet name
+     * @param appLabel    the label used to identify the pods of the StatefulSet
+     * @param replicas    the desired number of replicas
+     * @param namespace   the Kubernetes namespace
+     * @param timeout     bounded wait for the change to be observable
+     */
+    public static void scaleStatefulSetAndAwait(String statefulSet, String appLabel, int replicas,
+                                                String namespace, Duration timeout) {
+        run(timeout, "kubectl", "-n", namespace, "scale", "statefulset/" + statefulSet,
+                "--replicas=" + replicas);
+        if (replicas == 0) {
+            Poller.pollUntilTrue(
+                    () -> run(Duration.ofSeconds(15), "kubectl", "-n", namespace, "get", "pods",
+                            "-l", "app=" + appLabel, "-o", "name").isBlank(),
+                    timeout, "all pods of " + statefulSet + " to be terminated");
+        } else {
+            run(timeout, "kubectl", "-n", namespace, "rollout", "status", "statefulset/" + statefulSet,
+                    "--timeout=" + timeout.toSeconds() + "s");
+        }
+    }
+
+    private static String run(Duration timeout, String... command) {
         try {
             Process process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
@@ -43,6 +69,7 @@ public final class Kubectl {
                 throw new AssertionError("kubectl command failed (exit " + process.exitValue() + "): "
                         + String.join(" ", command) + "\nOutput:\n" + output);
             }
+            return output;
         } catch (Exception e) {
             throw new AssertionError("Could not run kubectl command: "
                     + String.join(" ", command), e);

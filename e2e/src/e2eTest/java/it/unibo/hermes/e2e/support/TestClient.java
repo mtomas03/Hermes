@@ -2,6 +2,7 @@ package it.unibo.hermes.e2e.support;
 
 import it.unibo.hermes.client.config.AppConfig;
 import it.unibo.hermes.client.controller.ConnectionController;
+import it.unibo.hermes.client.dto.OutboundMessageDto;
 import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
@@ -158,6 +159,48 @@ public final class TestClient implements AutoCloseable {
         ensureLocalConversation(conversationId, recipientUsername);
         Message sent = messageService.send(username, conversationId, recipientUsername, content);
         return sent.getMessageId();
+    }
+
+    /**
+     * Sends a message whose conversation id is chosen by the caller,
+     * instead of being derived from the two participants.
+     *
+     * @param conversationId    the conversation id to use
+     * @param recipientUsername the recipient's username
+     * @param content           the message content
+     * @return the messageId of this message
+     */
+    public String sendMessageWithConversationId(
+            String conversationId, String recipientUsername, String content) {
+        ensureLocalConversation(conversationId, recipientUsername);
+        return messageService.send(
+                username, conversationId, recipientUsername, content).getMessageId();
+    }
+
+    /**
+     * Re-submits an already sent message with the same {@code message_id}.
+     *
+     * @param conversationId the conversation id of the message
+     * @param messageId      the message id to re-submit
+     */
+    public void resubmitMessage(String conversationId, String messageId) {
+        Message original = findLocalMessage(conversationId, messageId)
+                .orElseThrow(() -> new IllegalStateException("No local message " + messageId));
+        boolean sent = webSocketService.sendMessage(new OutboundMessageDto(
+                original.getMessageId(), original.getConversationId(), original.getSenderUsername(),
+                original.getRecipientUsername(), original.getContent(), original.getLogicalTimestamp()));
+        if (!sent) {
+            throw new IllegalStateException("Cannot resubmit " + messageId + ": not connected");
+        }
+    }
+
+    /**
+     * Sends a delivery ACK for a message through the real STOMP session.
+     *
+     * @param messageId the message id to acknowledge
+     */
+    public void sendAck(String messageId) {
+        webSocketService.sendAck(messageId);
     }
 
     /**
