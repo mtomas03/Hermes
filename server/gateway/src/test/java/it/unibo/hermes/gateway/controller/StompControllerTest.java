@@ -67,6 +67,36 @@ class StompControllerTest {
     }
 
     @Test
+    void sendMessageWithConversationIdOfOtherUsersShouldBeRejectedAndNeverPublished() {
+        MessageToGatewayDto forged = new MessageToGatewayDto(
+                UUID.randomUUID().toString(), "bob-carol",
+                "alice", "dave", "hi",
+                1L);
+
+        controller.sendMessage(forged, ALICE);
+
+        verifyNoInteractions(publisherService);
+        ArgumentCaptor<ErrorDto> error = ArgumentCaptor.forClass(ErrorDto.class);
+        verify(messagingTemplate).convertAndSendToUser(
+                eq("alice"), eq("/queue/errors"), error.capture());
+        assertThat(error.getValue().code()).isEqualTo("INVALID_CONVERSATION");
+    }
+
+    @Test
+    void conversationIdIsCanonicalRegardlessOfParticipantOrderAndCase() {
+        assertThat(StompController.isCanonicalConversationId(
+                "alice-bob", "alice", "bob")).isTrue();
+        assertThat(StompController.isCanonicalConversationId(
+                "alice-bob", "bob", "alice")).isTrue();
+        assertThat(StompController.isCanonicalConversationId(
+                "alice-bob", " Alice ", "BOB")).isTrue();
+        assertThat(StompController.isCanonicalConversationId(
+                "bob-alice", "alice", "bob")).isFalse();
+        assertThat(StompController.isCanonicalConversationId(
+                null, "alice", "bob")).isFalse();
+    }
+
+    @Test
     void sendMessageMissingRecipientShouldBeRejected() {
         String messageId = UUID.randomUUID().toString();
         MessageToGatewayDto payload = new MessageToGatewayDto(
