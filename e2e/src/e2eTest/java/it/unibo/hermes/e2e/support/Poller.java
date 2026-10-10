@@ -65,11 +65,10 @@ public final class Poller {
             sleepQuietly(interval);
         }
 
-        String message = "Timed out after " + attempts + " attempts waiting for: "
+        String message = "Timed out after " + timeout + " (" + attempts + " attempts) waiting for: "
                 + description;
         if (lastError != null) {
-            throw new AssertionError(message + " - last error: "
-                    + describe(lastError), lastError);
+            throw new AssertionError(message + " - last error: " + describe(lastError), lastError);
         }
         throw new AssertionError(message);
     }
@@ -88,17 +87,28 @@ public final class Poller {
                 timeout, description);
     }
 
+    /**
+     * Decides whether an HTTP status may resolve on its own and is therefore worth retrying.
+     *
+     * @param status the HTTP status code
+     * @param path   the request path, if available
+     * @return {@code true} if the status is considered retryable, {@code false} otherwise
+     */
+    public static boolean isRetryable(int status, String path) {
+        return switch (status) {
+            case 408, 425, 429, 502, 503, 504 -> true;
+            case 403 -> path != null && path.startsWith("/api/v1/sync/");
+            default -> status < 400;
+        };
+    }
+
     private static void failFastOnServerError(Throwable error, String description) {
         WebClientResponseException http = findHttpError(error);
         if (http == null) {
             return;
         }
-        int status = http.getStatusCode().value();
-        boolean retryable = switch (status) {
-            case 403, 404, 408, 425, 429, 502, 503, 504 -> true;
-            default -> status < 400;
-        };
-        if (!retryable) {
+        String path = http.getRequest() != null ? http.getRequest().getURI().getPath() : null;
+        if (!isRetryable(http.getStatusCode().value(), path)) {
             throw new AssertionError("HTTP error while waiting for: " + description + " - " + describe(http), http);
         }
     }

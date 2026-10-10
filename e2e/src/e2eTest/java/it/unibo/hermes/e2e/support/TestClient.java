@@ -277,7 +277,7 @@ public final class TestClient implements AutoCloseable {
      */
     public List<InboundMessageDto> syncAndPersist(String conversationId, Duration timeout) {
         SyncResponseDto response = syncConversation(conversationId, timeout);
-        syncService.applySync(response);
+        syncService.applySync(response, username);
         return response.messages();
     }
 
