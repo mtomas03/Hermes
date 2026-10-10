@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,8 @@ class SyncServiceTest {
     private LocalPersistenceService persistence;
     @Mock
     private MessageService messageService;
+    @Mock
+    private WebSocketService webSocketService;
 
     private AppProperties props;
 
@@ -57,10 +60,10 @@ class SyncServiceTest {
 
     @Test
     void applySyncWithNoMessagesShouldNotTouchPersistenceOrClock() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
+        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService, webSocketService);
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of());
 
-        service.applySync(response);
+        service.applySync(response, "alice");
 
         verifyNoInteractions(persistence);
         verifyNoInteractions(messageService);
@@ -68,7 +71,7 @@ class SyncServiceTest {
 
     @Test
     void applySyncShouldPersistEachSyncedMessageAndSyncLamportClock() {
-        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService);
+        SyncService service = new SyncService(WebClient.create(), props, persistence, messageService, webSocketService);
         InboundMessageDto inbound1 = new InboundMessageDto(
                 "m1", "alice-bob", "bob", "alice",
                 "hi", 5L, "SENT");
@@ -77,7 +80,7 @@ class SyncServiceTest {
                 "how are you?", 8L, "SENT");
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(inbound1, inbound2));
 
-        service.applySync(response);
+        service.applySync(response, "alice");
 
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(persistence, times(2)).saveMessage(captor.capture());
@@ -88,10 +91,89 @@ class SyncServiceTest {
     }
 
     @Test
+    void applySyncAcknowledgesRecipientMessageOnlyAfterItIsPersisted() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto("alice-bob", List.of(
+                message("m1", "bob", "alice", "STORED"))), "alice");
+
+        InOrder order = inOrder(persistence, webSocketService);
+        order.verify(persistence).saveMessage(any(Message.class));
+        order.verify(webSocketService).sendAck("m1");
+    }
+
+    @Test
+    void applySyncDoesNotAcknowledgeWhenLocalPersistenceFails() {
+        SyncService service = serviceWithPersistenceResult(false);
+
+        service.applySync(new SyncResponseDto("alice-bob", List.of(
+                message("m1", "bob", "alice", "STORED"))), "alice");
+
+        verifyNoInteractions(webSocketService);
+    }
+
+    @Test
+    void applySyncDoesNotAcknowledgeMessagesSentByTheLocalUser() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto("alice-bob", List.of(
+                message("m1", "alice", "bob", "STORED"))), "alice");
+
+        verify(persistence).saveMessage(any(Message.class));
+        verifyNoInteractions(webSocketService);
+    }
+
+    @Test
+    void applySyncDoesNotResendAcknowledgementsTheServerAlreadyRecorded() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto("alice-bob",
+                List.of(message("m1", "bob", "alice", "ACKNOWLEDGED"))), "alice");
+
+        verifyNoInteractions(webSocketService);
+    }
+
+    @Test
+    void applySyncDoesNotAcknowledgeWhenTheLocalUserIsUnknown() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto("alice-bob", List.of(
+                message("m1", "bob", "alice", "STORED"))), null);
+
+        verifyNoInteractions(webSocketService);
+    }
+
+    @Test
+    void applySyncMatchesTheRecipientIgnoringCase() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto("alice-bob", List.of(
+                message("m1", "bob", "Alice", "STORED"))), "alice");
+
+        verify(webSocketService).sendAck("m1");
+    }
+
+    @Test
+    void repeatedSyncReAcknowledgesMessagesTheServerHasNotConfirmedYet() {
+        SyncService service = serviceWithPersistenceResult(true);
+        SyncResponseDto response = new SyncResponseDto("alice-bob",
+                List.of(
+                        message("m1", "bob", "alice", "STORED"),
+                        message("m2", "bob", "alice", "ACKNOWLEDGED")));
+
+        service.applySync(response, "alice");
+        service.applySync(response, "alice");
+
+        verify(webSocketService, times(2)).sendAck("m1");
+        verify(webSocketService, never()).sendAck("m2");
+        verify(persistence, times(4)).saveMessage(any(Message.class));
+    }
+
+    @Test
     void fetchConversationsShouldReturnListFromServer() throws Exception {
         ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob");
         WebClient client = stubClient(mapper.writeValueAsString(new ConversationDto[]{dto}));
-        SyncService service = new SyncService(client, props, persistence, messageService);
+        SyncService service = new SyncService(client, props, persistence, messageService, webSocketService);
 
         StepVerifier.create(service.fetchConversations("Bearer t"))
                 .assertNext(list -> assertEquals(1, list.size()))
@@ -102,10 +184,19 @@ class SyncServiceTest {
     void syncConversationShouldReturnServerResponse() throws Exception {
         SyncResponseDto dto = new SyncResponseDto("alice-bob", List.of());
         WebClient client = stubClient(mapper.writeValueAsString(dto));
-        SyncService service = new SyncService(client, props, persistence, messageService);
+        SyncService service = new SyncService(client, props, persistence, messageService, webSocketService);
 
         StepVerifier.create(service.syncConversation("alice-bob", "Bearer t"))
                 .assertNext(resp -> assertEquals("alice-bob", resp.conversationId()))
                 .verifyComplete();
+    }
+
+    private static InboundMessageDto message(String id, String sender, String recipient, String serverStatus) {
+        return new InboundMessageDto(id, "alice-bob", sender, recipient, "hi", 5L, serverStatus);
+    }
+
+    private SyncService serviceWithPersistenceResult(boolean persisted) {
+        when(persistence.saveMessage(any(Message.class))).thenReturn(persisted);
+        return new SyncService(WebClient.create(), props, persistence, messageService, webSocketService);
     }
 }

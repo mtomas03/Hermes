@@ -2,6 +2,7 @@ package it.unibo.hermes.client.service;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.ConversationDto;
+import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -21,20 +22,24 @@ import java.util.List;
 public class SyncService {
 
     private static final Logger log = LoggerFactory.getLogger(SyncService.class);
+    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private final WebClient webClient;
     private final AppProperties props;
     private final LocalPersistenceService persistence;
     private final MessageService messageService;
+    private final WebSocketService webSocketService;
 
     public SyncService(WebClient webClient,
                        AppProperties props,
                        LocalPersistenceService persistence,
-                       MessageService messageService) {
+                       MessageService messageService,
+                       WebSocketService webSocketService) {
         this.webClient = webClient;
         this.props = props;
         this.persistence = persistence;
         this.messageService = messageService;
+        this.webSocketService = webSocketService;
     }
 
     /**
@@ -79,12 +84,12 @@ public class SyncService {
     }
 
     /**
-     * Merges the synchronisation response with the local database,
-     * saving any new messages and updating the Lamport clock.
+     * Applies a full-sync response to local persistence and confirms receipt to the server.
      *
-     * @param response      the synchronisation response containing messages to merge
+     * @param response      the sync response to apply
+     * @param localUsername the user running this client, or {@code null} if unknown (no ACK is then sent)
      */
-    public void applySync(SyncResponseDto response) {
+    public void applySync(SyncResponseDto response, String localUsername) {
         for (var dto : response.messages()) {
             Message msg = new Message(
                     dto.messageId(),
@@ -95,13 +100,27 @@ public class SyncService {
                     dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L,
                     MessageStatus.SENT);
 
-            persistence.saveMessage(msg);
+            boolean persisted = persistence.saveMessage(msg);
 
             if (dto.logicalTimestamp() != null) {
                 messageService.syncConversationClock(
                         response.conversationId(),
                         dto.logicalTimestamp());
             }
+
+            if (!persisted) {
+                log.error("Could not persist synced message {} - it will not be acknowledged", dto.messageId());
+                continue;
+            }
+            if (needsAcknowledgement(dto, localUsername)) {
+                webSocketService.sendAck(dto.messageId());
+            }
         }
+    }
+
+    private static boolean needsAcknowledgement(InboundMessageDto dto, String localUsername) {
+        return localUsername != null
+                && localUsername.equalsIgnoreCase(dto.recipientUsername())
+                && !ACKNOWLEDGED.equals(dto.messageStatus());
     }
 }

@@ -16,6 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -30,6 +33,7 @@ public class WebSocketService {
     private final WebSocketStompClient stompClient;
     private final AppProperties props;
     private final AtomicReference<StompSession> session = new AtomicReference<>();
+    private final Set<String> pendingAcks = ConcurrentHashMap.newKeySet();
 
     // Callbacks injected by ConnectionController
     private volatile Consumer<InboundMessageDto> onMessage = msg -> {
@@ -109,6 +113,7 @@ public class WebSocketService {
         stompClient.connectAsync(url, httpHeaders, stompConnectHeaders, handler)
                 .thenApply(s -> {
                     session.set(s);
+                    flushPendingAcks();
                     return s;
                 })
                 .exceptionally(e -> {
@@ -134,23 +139,45 @@ public class WebSocketService {
     }
 
     /**
-     * Sends an ACK for a message that has just been persisted locally.
+     * Acknowledges a message that is persisted locally.
      *
-     * @param messageId     the identifier of the message being acknowledged
+     * @param messageId the identifier of the message being acknowledged
      */
     public void sendAck(String messageId) {
+        pendingAcks.add(messageId);
+        flushPendingAcks();
+    }
+
+    /**
+     * Transmits all pending ACKs over the current session, if connected. An ACK is removed from the queue
+     * right before being delivered to the transport protocol and reinserted into the queue if the transfer fails.
+     */
+    void flushPendingAcks() {
         StompSession s = session.get();
         if (s == null || !s.isConnected()) {
-            log.warn("Cannot send ACK for {}: not connected", messageId);
+            if (!pendingAcks.isEmpty()) {
+                log.debug("{} ACK(s) pending until the WebSocket is connected", pendingAcks.size());
+            }
             return;
         }
-        s.send(props.getStompSendAckDestination(), new DeliveryAckDto(messageId));
+        for (String id : List.copyOf(pendingAcks)) {
+            if (!pendingAcks.remove(id)) {
+                continue; // transmitted by a concurrent flush
+            }
+            try {
+                s.send(props.getStompSendAckDestination(), new DeliveryAckDto(id));
+            } catch (RuntimeException e) {
+                log.warn("Could not send ACK for {}, keeping it pending: {}", id, e.getMessage());
+                pendingAcks.add(id);
+            }
+        }
     }
 
     /**
      * Disconnects the WebSocket connection if it is currently open.
      */
     public void disconnect() {
+        pendingAcks.clear();
         StompSession s = session.getAndSet(null);
         if (s != null && s.isConnected()) {
             log.info("Disconnecting WebSocket");

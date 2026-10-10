@@ -164,7 +164,8 @@ public class SyncController {
                 id -> syncService
                         .syncConversation(id, token.bearerHeader())
                         .map(response -> {
-                            syncService.applySync(response);
+                            User current = stateModel.getCurrentUser();
+                            syncService.applySync(response, current != null ? current.username() : null);
                             return new SyncResult(id, response.messages().size());
                         })
                         .doOnSuccess(result -> {

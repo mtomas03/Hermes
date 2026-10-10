@@ -52,6 +52,7 @@ class SyncControllerTest {
     void syncAllShouldFetchAndSyncConversationsWhenTokenIsValid() {
         AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
         when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
         ConversationDto dto = new ConversationDto("alice-bob", "alice", "bob");
         when(syncService.fetchConversations(validToken.bearerHeader()))
                 .thenReturn(Mono.just(List.of(dto)));
@@ -66,7 +67,7 @@ class SyncControllerTest {
 
         verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveConversation(any(Conversation.class));
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConversations(anyList());
-        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse);
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse, "alice");
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setSyncing(false);
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setStatusMessage("Online");
     }
@@ -76,6 +77,7 @@ class SyncControllerTest {
         AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
         Conversation selectedConv = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
         when(stateModel.getSelectedConversation()).thenReturn(selectedConv);
         SyncResponseDto syncResponse = new SyncResponseDto("alice-bob", List.of());
         when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
@@ -83,7 +85,7 @@ class SyncControllerTest {
 
         controller.syncConversationIfNeeded("alice-bob");
 
-        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse);
+        verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse, "alice");
         verify(persistence, timeout(ASYNC_TIMEOUT_MS)).loadMessages("alice-bob");
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(anyList());
     }
