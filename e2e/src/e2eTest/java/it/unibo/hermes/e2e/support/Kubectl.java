@@ -53,6 +53,21 @@ public final class Kubectl {
         }
     }
 
+    /**
+     * Triggers a rolling restart of a StatefulSet and waits for the rollout to complete.
+     * The pod is recreated on its existing PersistentVolumeClaim,
+     * so persisted data survives (used for the Cassandra restart).
+     *
+     * @param statefulSet the StatefulSet name, e.g. {@code "cassandra-statefulset"}
+     * @param namespace   the Kubernetes namespace
+     * @param timeout     bounded wait for the rollout to finish
+     */
+    public static void restartStatefulSetAndAwait(String statefulSet, String namespace, Duration timeout) {
+        run(timeout, "kubectl", "-n", namespace, "rollout", "restart", "statefulset/" + statefulSet);
+        run(timeout, "kubectl", "-n", namespace, "rollout", "status", "statefulset/" + statefulSet,
+                "--timeout=" + timeout.toSeconds() + "s");
+    }
+
     private static String run(Duration timeout, String... command) {
         try {
             Process process = new ProcessBuilder(command)
