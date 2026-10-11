@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -52,6 +53,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles authorisation failures raised by the application layer.
+     *
+     * @param ex the access denied exception
+     * @return a problem detail response with status 403 Forbidden
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        pd.setTitle("Access denied");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /**
      * Handles invalid argument errors.
      *
      * @param ex the illegal argument exception
@@ -76,7 +91,7 @@ public class GlobalExceptionHandler {
         log.error("Persistence unavailable: {}", ex.getMessage());
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
         pd.setTitle("Service temporarily unavailable");
-        pd.setDetail("MessageByConversation could not be persisted. Please retry.");
+        pd.setDetail("The persistence layer is temporarily unavailable. Please retry.");
         return pd;
     }
 

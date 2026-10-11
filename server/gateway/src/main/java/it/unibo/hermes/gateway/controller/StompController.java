@@ -77,6 +77,17 @@ public class StompController {
             return;
         }
 
+        if (!isCanonicalConversationId(payload.conversationId(), sender, payload.recipientUsername())) {
+            // The conversation id decides which partition/conversation the Worker indexes both users into, so a
+            // client-chosen id would let a user join (and inject messages into) conversations they do not belong to.
+            log.warn("Rejected message from '{}': conversationId '{}' does not match the participants",
+                    sender, payload.conversationId());
+            sendError(
+                    sender, payload.messageId(),
+                    "INVALID_CONVERSATION", "Field 'conversationId' does not match the conversation participants");
+            return;
+        }
+
         try {
             MessageEvent accepted = publisherService.publish(payload, sender);
             messagingTemplate.convertAndSendToUser(sender, "/queue/acks",
@@ -130,6 +141,26 @@ public class StompController {
     public ErrorDto handleException(Exception ex) {
         log.warn("STOMP message handling error: {}", ex.getMessage());
         return new ErrorDto("MALFORMED_MESSAGE", "Could not process message", null);
+    }
+
+    /**
+     * Checks whether the given conversation ID is canonical
+     * for the given sender and recipient.
+     *
+     * @param conversationId the conversation ID to check
+     * @param sender the sender's username
+     * @param recipient the recipient's username
+     * @return true if the conversation ID is canonical, false otherwise
+     */
+    public static boolean isCanonicalConversationId(
+            String conversationId, String sender, String recipient) {
+        if (conversationId == null) {
+            return false;
+        }
+        String a = sender.trim().toLowerCase();
+        String b = recipient.trim().toLowerCase();
+        String expected = a.compareTo(b) <= 0 ? a + "-" + b : b + "-" + a;
+        return expected.equals(conversationId);
     }
 
     private void sendError(String username, String messageId, String code, String reason) {

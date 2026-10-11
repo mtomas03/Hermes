@@ -20,11 +20,31 @@ public class RedisPresenceAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(RedisPresenceAdapter.class);
 
+    /**
+     * Deletes the user presence hash only if the gatewayId field matches the provided value.
+     * KEYS[1] = key; ARGV = fieldGatewayId, gatewayId. Returns 1 if deleted, else 0.
+     */
     private static final RedisScript<Long> DELETE_IF_GATEWAY_MATCH_SCRIPT = new DefaultRedisScript<>(
             "if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then " +
                     "return redis.call('DEL', KEYS[1]) " +
                     "else " +
                     "return 0 " +
+                    "end",
+            Long.class
+    );
+
+    /**
+     * Refreshes the TTL of an existing presence entry or, if the entry is missing, recreates it.
+     * KEYS[1] = key; ARGV = fieldOnline, fieldGatewayId, gatewayId, ttlSeconds. Returns 1 if recreated, else 0.
+     */
+    private static final RedisScript<Long> REFRESH_OR_RESTORE_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('EXISTS', KEYS[1]) == 1 then " +
+                    "redis.call('EXPIRE', KEYS[1], ARGV[4]) " +
+                    "return 0 " +
+                    "else " +
+                    "redis.call('HSET', KEYS[1], ARGV[1], 'true', ARGV[2], ARGV[3]) " +
+                    "redis.call('EXPIRE', KEYS[1], ARGV[4]) " +
+                    "return 1 " +
                     "end",
             Long.class
     );
@@ -108,7 +128,34 @@ public class RedisPresenceAdapter {
     }
 
     /**
-     * Checks whether an active presence record exists and has online=true.
+     * Keeps the presence of a user, whose session is still active on this Gateway, alive:
+     * refreshes the TTL of the existing entry or recreates the entry when it has been lost.
+     *
+     * <p> Presence is transient state that is reconstructible from the open WebSocket sessions.
+     *
+     * @param username  the user with an active session on this Gateway
+     * @param gatewayId the identifier of this Gateway instance
+     * @return {@code true} if the entry had to be recreated
+     */
+    public boolean refreshOrRestore(String username, String gatewayId) {
+        try {
+            Long restored = redis.execute(
+                    REFRESH_OR_RESTORE_SCRIPT,
+                    Collections.singletonList(presenceKey(username)),
+                    fieldOnline, fieldGatewayId, gatewayId, String.valueOf(ttlSeconds));
+            boolean recreated = Long.valueOf(1L).equals(restored);
+            if (recreated) {
+                log.info("Presence of '{}' was missing - restored ONLINE on gateway '{}'", username, gatewayId);
+            }
+            return recreated;
+        } catch (Exception e) {
+            log.warn("Redis unavailable - could not refresh/restore presence for '{}': {}", username, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Checks if a user is currently marked as online in Redis.
      *
      * @param username the username to check
      * @return {@code true} if the user is online, {@code false} otherwise

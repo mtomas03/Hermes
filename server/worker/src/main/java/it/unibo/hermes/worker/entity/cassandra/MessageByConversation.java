@@ -4,7 +4,6 @@ import org.springframework.data.cassandra.core.mapping.Column;
 import org.springframework.data.cassandra.core.mapping.PrimaryKey;
 import org.springframework.data.cassandra.core.mapping.Table;
 
-import java.time.Instant;
 
 /**
  * Cassandra entity representing a record in the {@code messages_by_conversation} table.
@@ -30,8 +29,6 @@ public class MessageByConversation {
     @Column("delivery_status")
     private String deliveryStatus;
 
-    @Column("physical_timestamp")
-    private Instant physicalTimestamp;
 
     /**
      * Constructs a fully initialised conversation message entity.
@@ -41,15 +38,13 @@ public class MessageByConversation {
      * @param recipientUsername the username of the recipient
      * @param content           the content of the message
      * @param deliveryStatus    the current delivery status
-     * @param physicalTimestamp the server creation physical timestamp
      */
-    public MessageByConversation(MessageByConversationPrimaryKey key, String senderUsername, String recipientUsername, String content, String deliveryStatus, Instant physicalTimestamp) {
+    public MessageByConversation(MessageByConversationPrimaryKey key, String senderUsername, String recipientUsername, String content, String deliveryStatus) {
         this.key = key;
         this.senderUsername = senderUsername;
         this.recipientUsername = recipientUsername;
         this.content = content;
         this.deliveryStatus = deliveryStatus;
-        this.physicalTimestamp = physicalTimestamp;
     }
 
     public MessageByConversationPrimaryKey getKey() {
@@ -92,11 +87,5 @@ public class MessageByConversation {
         this.deliveryStatus = deliveryStatus;
     }
 
-    public Instant getPhysicalTimestamp() {
-        return physicalTimestamp;
-    }
 
-    public void setPhysicalTimestamp(Instant physicalTimestamp) {
-        this.physicalTimestamp = physicalTimestamp;
-    }
 }

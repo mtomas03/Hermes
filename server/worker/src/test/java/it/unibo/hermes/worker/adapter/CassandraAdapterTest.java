@@ -10,6 +10,7 @@ import it.unibo.hermes.worker.repository.cassandra.MessageByIdRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -91,6 +92,40 @@ class CassandraAdapterTest {
                         index.getConversationId().equals(event.conversationId()) &&
                         index.getOtherParticipant().equals("alice")
         ));
+    }
+
+    @Test
+    void shouldWriteMessageByIdLastSoItActsAsTheCompletionMarker() {
+        MessageEvent event = createSampleEvent();
+        when(messageByIdRepository.findById(any())).thenReturn(Optional.empty());
+
+        cassandraAdapter.persistMessage(event);
+
+        InOrder order = inOrder(messageByConversationRepository, conversationByUserRepository, messageByIdRepository);
+        order.verify(messageByConversationRepository).save(any());
+        order.verify(conversationByUserRepository, times(2)).save(any());
+        order.verify(messageByIdRepository).save(any());
+    }
+
+    @Test
+    void redeliveryAfterPartialPersistenceCompletesTheMissingRows() {
+        MessageEvent event = createSampleEvent();
+        UUID messageId = UUID.fromString(event.messageId());
+        // message_by_id is never written while an earlier write fails, so the redelivery sees "not persisted".
+        when(messageByIdRepository.findById(messageId)).thenReturn(Optional.empty());
+        when(conversationByUserRepository.save(any()))
+                .thenThrow(new RuntimeException("Cassandra write failed"))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
+                .isInstanceOf(PersistenceUnavailableException.class);
+        verify(messageByIdRepository, never()).save(any());
+
+        cassandraAdapter.persistMessage(event);
+
+        verify(messageByIdRepository).save(argThat(byId -> byId.getMessageId().equals(messageId)));
+        verify(conversationByUserRepository, times(3)).save(any());
+        verify(messageByConversationRepository, times(2)).save(any());
     }
 
     @Test

@@ -23,17 +23,17 @@ class HeartbeatServiceTest {
 
     @BeforeEach
     void setUp() {
-        heartbeatService = new HeartbeatService(registry, presenceService);
+        heartbeatService = new HeartbeatService(registry, presenceService, "gateway-1");
     }
 
     @Test
-    void shouldRefreshTtlForEveryConnectedUser() {
+    void shouldRefreshOrRestorePresenceForEveryConnectedUser() {
         when(registry.allUsernames()).thenReturn(Set.of("alice", "bob"));
 
         heartbeatService.refreshPresenceTtl();
 
-        verify(presenceService).refreshTtl("alice");
-        verify(presenceService).refreshTtl("bob");
+        verify(presenceService).refreshOrRestore("alice", "gateway-1");
+        verify(presenceService).refreshOrRestore("bob", "gateway-1");
     }
 
     @Test
@@ -48,10 +48,10 @@ class HeartbeatServiceTest {
     @Test
     void shouldContinueRefreshingOtherUsersWhenOneRefreshFails() {
         when(registry.allUsernames()).thenReturn(Set.of("failing-user", "healthy-user"));
-        doThrow(new RuntimeException("Redis down")).when(presenceService).refreshTtl("failing-user");
+        doThrow(new RuntimeException("Redis down")).when(presenceService).refreshOrRestore("failing-user", "gateway-1");
 
         heartbeatService.refreshPresenceTtl();
 
-        verify(presenceService).refreshTtl("healthy-user");
+        verify(presenceService).refreshOrRestore("healthy-user", "gateway-1");
     }
 }

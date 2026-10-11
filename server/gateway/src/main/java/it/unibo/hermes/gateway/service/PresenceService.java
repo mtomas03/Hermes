@@ -56,11 +56,15 @@ public class PresenceService {
     }
 
     /**
-     * Checks whether a user currently has an active online presence record in Redis.
+     * Refreshes the presence TTL of a connected user,
+     * recreating the entry if it was lost.
      *
-     * @param username the username to check
-     * @return {@code true} if the user has an active session, {@code false} otherwise
+     * @return {@code true} if the entry had to be recreated
      */
+    public boolean refreshOrRestore(String username, String gatewayId) {
+        return presenceAdapter.refreshOrRestore(username, gatewayId);
+    }
+
     public boolean isOnline(String username) {
         return presenceAdapter.isOnline(username);
     }

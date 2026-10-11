@@ -46,6 +46,13 @@ class PresenceServiceTest {
     }
 
     @Test
+    void refreshOrRestoreDelegatesToTheAdapter() {
+        when(presenceAdapter.refreshOrRestore("alice", "gateway-1")).thenReturn(true);
+
+        assertThat(service.refreshOrRestore("alice", "gateway-1")).isTrue();
+    }
+
+    @Test
     void shouldReportOnlineStatusFromAdapter() {
         when(presenceAdapter.isOnline("alice")).thenReturn(true);
 

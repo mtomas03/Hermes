@@ -1,6 +1,7 @@
 package it.unibo.hermes.gateway.entity.cassandra;
 
 import it.unibo.hermes.gateway.domain.MessageStatus;
+import org.springframework.data.annotation.PersistenceCreator;
 import org.springframework.data.cassandra.core.mapping.Column;
 import org.springframework.data.cassandra.core.mapping.PrimaryKey;
 import org.springframework.data.cassandra.core.mapping.Table;
@@ -27,6 +28,20 @@ public class MessageByConversation {
 
     @Column("delivery_status")
     private String deliveryStatus;
+
+    @PersistenceCreator
+    public MessageByConversation(
+            MessageByConversationPrimaryKey key,
+            String senderUsername,
+            String recipientUsername,
+            String content,
+            String deliveryStatus) {
+        this.key = key;
+        this.senderUsername = senderUsername;
+        this.recipientUsername = recipientUsername;
+        this.content = content;
+        this.deliveryStatus = deliveryStatus;
+    }
 
     public MessageByConversation(
             UUID messageId,
@@ -68,6 +83,11 @@ public class MessageByConversation {
     }
 
     public MessageStatus getDeliveryStatus() {
-        return MessageStatus.valueOf(deliveryStatus);
+        try {
+            return MessageStatus.valueOf(deliveryStatus);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new IllegalStateException("Corrupted delivery_status '" + deliveryStatus
+                    + "' for message " + key.getMessageId() + " in conversation " + key.getConversationId(), e);
+        }
     }
 }

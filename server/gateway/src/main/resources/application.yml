@@ -41,19 +41,18 @@ spring:
     bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
       retries: 0 # retries managed by adapter/service
       properties:
         delivery.timeout.ms: 5000
         request.timeout.ms: 3000
+        max.block.ms: 3000
     consumer:
       group-id: hermes-gateway
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: "it.unibo.hermes.*"
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 hermes:
   topics:
