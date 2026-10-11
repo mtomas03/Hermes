@@ -17,8 +17,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class RedisPresenceAdapterTest {
@@ -87,6 +86,28 @@ class RedisPresenceAdapterTest {
 
         assertThatCode(() -> adapter.setOffline("alice", "gateway-1"))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void refreshOrRestoreRunsTheAtomicScriptAndReportsWhetherTheEntryWasRecreated() {
+        when(redis.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), any(), any(), any(), any()))
+                .thenReturn(1L, 0L);
+
+        assertThat(adapter.refreshOrRestore("alice", "gateway-1")).isTrue();
+        assertThat(adapter.refreshOrRestore("alice", "gateway-1")).isFalse();
+
+        verify(redis, times(2)).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("hermes:presence:alice")),
+                eq("online"), eq("gatewayId"), eq("gateway-1"), eq("300"));
+    }
+
+    @Test
+    void refreshOrRestoreSwallowsRedisFailures() {
+        when(redis.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("Redis connection error"));
+
+        assertThat(adapter.refreshOrRestore("alice", "gateway-1")).isFalse();
     }
 
     @Test
