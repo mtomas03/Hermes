@@ -38,6 +38,7 @@ public class DeliveryService {
 
         if (cassandraAdapter.isAlreadyProcessed(messageId)) {
             log.info("Message {} already processed - skipping duplicate event", messageId);
+            cassandraAdapter.reconcileConversationProjection(messageId);
             return;
         }
 
