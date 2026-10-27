@@ -15,8 +15,8 @@ allprojects {
 }
 
 subprojects {
-    apply(plugin = "java")
-    apply(plugin = "jacoco")
+    pluginManager.apply("java")
+    pluginManager.apply("jacoco")
 
     java {
         toolchain {
@@ -41,5 +41,14 @@ subprojects {
             html.required.set(true)
             csv.required.set(false)
         }
+    }
+}
+
+configure(subprojects.filter { it.name in listOf("client", "gateway", "worker") }) {
+    pluginManager.apply("org.springframework.boot")
+    pluginManager.apply("io.spring.dependency-management")
+
+    tasks.named<Jar>("jar") {
+        enabled = false
     }
 }

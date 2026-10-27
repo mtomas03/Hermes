@@ -1,8 +1,3 @@
-plugins {
-    id("org.springframework.boot")
-    id("io.spring.dependency-management")
-}
-
 group = "it.unibo.hermes.worker"
 
 springBoot {
@@ -21,8 +16,4 @@ dependencies {
 
 tasks.bootJar {
     archiveFileName.set("worker.jar")
-}
-
-tasks.named<Jar>("jar") {
-    enabled = false
 }
