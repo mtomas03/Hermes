@@ -5,12 +5,12 @@
 All resources are deployed inside the `hermes-namespace` namespace:
 
 - **gateway-deployment**: Hermes Gateway (3 replicas), exposed through NGINX Ingress.
-- **worker-deployment**: Delivery worker consuming Kafka events.
-- **postgres-statefulset**: PostgreSQL database (`hermes-postgres`) for authentication.
+- **postgres-statefulset**: PostgreSQL database (`hermes-postgres`) for accounts. Deliberately a **single instance** (ACID integrity, no failover); probes use `pg_isready`.
 - **redis-deployment**: Redis (`hermes-redis`) for user presence and message routing state.
 - **hermes-kafka**: Single-node Kafka broker (`hermes-kafka`) operating in KRaft mode.
-- **cassandra-statefulset**: Cassandra cluster (`hermes-cassandra`) for persistent message storage.
-- **cassandra-schema Job**: One-off Job (`cassandra-schema`) executing `schema.cql` to initialize the `hermes` keyspace and tables.
+- **cassandra-statefulset**: Cassandra cluster of 3 nodes (one PVC each, governed by the headless Service `hermes-cassandra-headless`; clients use the ClusterIP Service `hermes-cassandra`). Keyspace `hermes` uses `NetworkTopologyStrategy` with 3 replicas in `datacenter1`; the services use `LOCAL_QUORUM` (2 of 3), so one node can be down. A PodDisruptionBudget allows at most one voluntary disruption.
+- **worker-deployment**: single replica of the worker, which consumes messages from Kafka and writes them to Cassandra.
+- **cassandra-schema Job**: One-off Job (`cassandra-schema`) executing `schema.cql` to initialise the `hermes` keyspace and tables.
 - **NGINX Ingress**: Routes external traffic from `hermes.local` to `hermes-gateway` on port `80` while maintaining persistent WebSocket connections.
 
 ## Prerequisites
@@ -34,8 +34,8 @@ The execution flow of `deploy.sh` performs the following steps:
 
 1. Starts Minikube if it is not already running;
 2. Enables the NGINX Ingress addon (`minikube addons enable ingress`);
-3. Executes `build-images.sh` to build the application executable Spring Boot artifacts (`:bootJar`) and compile Docker images directly inside Minikube's Docker daemon;
-4. Prepares the `cassandra-schema` ConfigMap and resets any previous initialization Job;
+3. Executes `build-images.sh` to build the application executable Spring Boot artefacts (`:bootJar`) and compile Docker images directly inside Minikube's Docker daemon;
+4. Prepares the `cassandra-schema` ConfigMap and resets any previous initialisation Job;
 5. Applies all manifests via Kustomize (`kubectl apply -k`);
 6. Waits for core infrastructure components (`postgres-statefulset`, `cassandra-statefulset`, `hermes-kafka`, `redis-deployment`);
 7. Waits for the `cassandra-schema` Job to complete execution;
@@ -74,10 +74,4 @@ Check cluster status in hermes-namespace
 Tear down all resources of the cluster
 ```bash
 ./undeploy.sh
-```
-
-Inspect application logs
-```bash
-kubectl -n hermes-namespace logs -f deployment/gateway-deployment
-kubectl -n hermes-namespace logs -f deployment/worker-deployment
 ```
