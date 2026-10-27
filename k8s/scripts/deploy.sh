@@ -36,7 +36,7 @@ kubectl apply -k "$K8S_ROOT"
 
 echo "[6/8] Waiting for the infrastructure"
 kubectl -n "$NAMESPACE" rollout status statefulset/postgres-statefulset --timeout=180s
-kubectl -n "$NAMESPACE" rollout status statefulset/cassandra-statefulset --timeout=240s
+kubectl -n "$NAMESPACE" rollout status statefulset/cassandra-statefulset --timeout=900s
 kubectl -n "$NAMESPACE" rollout status statefulset/kafka-statefulset --timeout=240s
 kubectl -n "$NAMESPACE" rollout status deployment/redis-deployment --timeout=120s
 

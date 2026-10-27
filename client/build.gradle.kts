@@ -33,6 +33,11 @@ dependencies {
     testImplementation("io.projectreactor:reactor-test")
 }
 
+tasks.named<Jar>("jar") {
+    enabled = true
+}
+
 tasks.bootJar {
     archiveFileName.set("HermesClient.jar")
+    archiveClassifier.set("boot")
 }

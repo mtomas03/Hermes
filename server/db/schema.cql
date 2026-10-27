@@ -1,6 +1,9 @@
 CREATE KEYSPACE IF NOT EXISTS hermes
-    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
+    WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 3}
      AND durable_writes = true;
+
+ALTER KEYSPACE hermes
+    WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 3};
 
 USE hermes;
 
