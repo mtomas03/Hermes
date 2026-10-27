@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.service;
 
+import it.unibo.hermes.client.repository.AuthTokenRepository;
 import it.unibo.hermes.client.repository.ConversationRepository;
 import it.unibo.hermes.client.repository.LocalUserRepository;
 import it.unibo.hermes.client.repository.MessageRepository;
@@ -19,13 +20,16 @@ public class LocalPersistenceService {
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
     private final LocalUserRepository userRepository;
+    private final AuthTokenRepository authTokenRepository;
 
     public LocalPersistenceService(MessageRepository messageRepository,
                                    ConversationRepository conversationRepository,
-                                   LocalUserRepository localUserRepository) {
+                                   LocalUserRepository localUserRepository,
+                                   AuthTokenRepository authTokenRepository) {
         this.messageRepository = messageRepository;
         this.conversationRepository = conversationRepository;
         this.userRepository = localUserRepository;
+        this.authTokenRepository = authTokenRepository;
     }
 
     /**
@@ -107,10 +111,42 @@ public class LocalPersistenceService {
     }
 
     /**
+     * Persists the JWT so it can be reused after a restart, until it expires.
+     *
+     * @param token the token to persist
+     */
+    public void saveAuthToken(AuthToken token) {
+        authTokenRepository.save(token);
+    }
+
+    /**
+     * Loads the stored JWT if it is still valid. An expired token is deleted and not returned.
+     *
+     * @return an Optional containing the token if it is still valid, or empty if none found or expired
+     */
+    public Optional<AuthToken> loadValidAuthToken() {
+        Optional<AuthToken> stored = authTokenRepository.find();
+        if (stored.isPresent() && !stored.get().isValid()) {
+            authTokenRepository.clear();
+            return Optional.empty();
+        }
+        return stored;
+    }
+
+    /**
+     * Deletes every persisted token.
+     */
+    public void clearAuthToken() {
+        authTokenRepository.clear();
+    }
+
+    /**
      * Clears the local user data.
      */
     public void clearLocalUser() {
         userRepository.clear();
+        messageRepository.clear();
+        conversationRepository.clear();
     }
 
     /**

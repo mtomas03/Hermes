@@ -10,12 +10,17 @@ import it.unibo.hermes.client.service.LocalPersistenceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
+import java.util.Optional;
 import java.util.function.Consumer;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -121,5 +126,74 @@ class AuthControllerTest {
         verify(connectionController).disconnect();
         verify(persistence).clearLocalUser();
         verify(stateModel).clearSession();
+    }
+
+    @Test
+    void successfulLoginShouldPersistTheToken() {
+        when(authService.login("alice", "secret"))
+                .thenReturn(Mono.just(new AuthResponseDto("jwt-token", "alice", 3_600_000)));
+
+        controller.login("alice", "secret", onError);
+
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveAuthToken(any(AuthToken.class));
+    }
+
+    @Test
+    void restoreSessionShouldReuseValidStoredToken() {
+        AuthToken token = new AuthToken("stored-jwt", Instant.now().plusSeconds(600));
+        when(persistence.loadValidAuthToken()).thenReturn(Optional.of(token));
+        when(persistence.loadLocalUser()).thenReturn(Optional.of(new User("alice")));
+
+        boolean restored = controller.restoreSession();
+
+        assertTrue(restored);
+        verify(stateModel).setAuthToken(token);
+        verify(connectionController).connect("stored-jwt");
+        verify(stateModel).setAuthState(AuthState.AUTHENTICATED);
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void restoreSessionShouldDoNothingWithoutValidToken() {
+        when(persistence.loadValidAuthToken()).thenReturn(Optional.empty());
+
+        assertFalse(controller.restoreSession());
+
+        verify(stateModel, never()).setAuthState(AuthState.AUTHENTICATED);
+        verifyNoInteractions(connectionController);
+    }
+
+    @Test
+    void restoreSessionShouldDropTokenWhenLocalUserIsMissing() {
+        when(persistence.loadValidAuthToken())
+                .thenReturn(Optional.of(new AuthToken("t", Instant.now().plusSeconds(60))));
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
+
+        assertFalse(controller.restoreSession());
+
+        verify(persistence).clearAuthToken();
+        verifyNoInteractions(connectionController);
+    }
+
+    @Test
+    void logoutShouldClearPersistedTokenFirstAndNotDeleteHistory() {
+        controller.logout();
+
+        InOrder order = inOrder(persistence, connectionController);
+        order.verify(persistence).clearAuthToken();
+        order.verify(connectionController).disconnect();
+        verify(persistence, never()).saveMessage(any());
+        verify(persistence, never()).saveConversation(any());
+    }
+
+    @Test
+    void logoutShouldCompleteEvenIfDisconnectFails() {
+        doThrow(new IllegalStateException("socket error")).when(connectionController).disconnect();
+
+        controller.logout();
+
+        verify(persistence).clearAuthToken();
+        verify(stateModel).clearSession();
+        verify(syncController).resetSyncState();
     }
 }

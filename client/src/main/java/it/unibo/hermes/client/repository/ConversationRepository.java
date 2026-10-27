@@ -86,6 +86,18 @@ public class ConversationRepository {
         return Optional.empty();
     }
 
+    /**
+     * Clears all conversations from the database.
+     */
+    public void clear() {
+        try (Connection conn = db.getDataSource().getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("DELETE FROM conversation");
+        } catch (SQLException e) {
+            log.error("Failed to clear local conversations", e);
+        }
+    }
+
     private Conversation mapRow(ResultSet rs) throws SQLException {
         User recipientUsername = new User(rs.getString("recipient_username"));
         return new Conversation(

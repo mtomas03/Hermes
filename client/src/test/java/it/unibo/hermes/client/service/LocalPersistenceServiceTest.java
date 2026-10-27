@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.service;
 
+import it.unibo.hermes.client.repository.AuthTokenRepository;
 import it.unibo.hermes.client.repository.ConversationRepository;
 import it.unibo.hermes.client.repository.LocalUserRepository;
 import it.unibo.hermes.client.repository.MessageRepository;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -28,12 +30,14 @@ class LocalPersistenceServiceTest {
     private ConversationRepository conversationRepository;
     @Mock
     private LocalUserRepository userRepository;
+    @Mock
+    private AuthTokenRepository authTokenRepository;
 
     private LocalPersistenceService service;
 
     @BeforeEach
     void setUp() {
-        service = new LocalPersistenceService(messageRepository, conversationRepository, userRepository);
+        service = new LocalPersistenceService(messageRepository, conversationRepository, userRepository, authTokenRepository);
     }
 
     @Test
@@ -142,5 +146,31 @@ class LocalPersistenceServiceTest {
         service.clearLocalUser();
 
         verify(userRepository).clear();
+    }
+
+    @Test
+    void validStoredTokenShouldBeReturned() {
+        AuthToken token = new AuthToken("jwt", Instant.now().plusSeconds(600));
+        when(authTokenRepository.find()).thenReturn(Optional.of(token));
+
+        assertEquals(Optional.of(token), service.loadValidAuthToken());
+        org.mockito.Mockito.verify(authTokenRepository, org.mockito.Mockito.never()).clear();
+    }
+
+    @Test
+    void expiredStoredTokenShouldBeDeletedAndNotReturned() {
+        AuthToken expired = new AuthToken("jwt", Instant.now().minusSeconds(1));
+        when(authTokenRepository.find()).thenReturn(Optional.of(expired));
+
+        assertTrue(service.loadValidAuthToken().isEmpty());
+        verify(authTokenRepository).clear();
+    }
+
+    @Test
+    void clearingTheTokenShouldNotTouchMessagesOrConversations() {
+        service.clearAuthToken();
+
+        verify(authTokenRepository).clear();
+        org.mockito.Mockito.verifyNoInteractions(messageRepository, conversationRepository);
     }
 }

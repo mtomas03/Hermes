@@ -1,12 +1,15 @@
 package it.unibo.hermes.client;
 
 import it.unibo.hermes.client.config.AppConfig;
+import it.unibo.hermes.client.controller.AuthController;
 import it.unibo.hermes.client.controller.NavigationController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import javax.swing.*;
+
+import static java.util.concurrent.CompletableFuture.runAsync;
 
 /**
  * Client entry-point.
@@ -32,6 +35,9 @@ public class HermesClientApp {
             NavigationController nav = context.getBean(NavigationController.class);
             nav.initPrimaryFrame(frame);
             nav.showLogin();
+
+            AuthController auth = context.getBean(AuthController.class);
+            runAsync(auth::restoreSession);
 
             frame.setVisible(true);
 
