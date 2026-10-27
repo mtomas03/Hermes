@@ -1,5 +1,13 @@
 package it.unibo.hermes.gateway.exception;
 
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientConnectionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -96,6 +104,49 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles a violated data integrity constraint.
+     *
+     * @param ex the integrity violation
+     * @return a problem detail response with status 409 Conflict
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Integrity constraint violated: {}", ex.getClass().getSimpleName());
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Conflict");
+        pd.setDetail("The requested account already exists");
+        return pd;
+    }
+
+    /**
+     * Distinguishes an unavailable account database from other data-access errors.
+     *
+     * @param ex the data-access exception
+     * @return 503 if the database is unreachable or timed out, otherwise 500
+     */
+    @ExceptionHandler(DataAccessException.class)
+    public ProblemDetail handleDataAccess(DataAccessException ex) {
+        if (isInfrastructureFailure(ex)) {
+            return databaseUnavailable(ex);
+        }
+        log.error("Data access error", ex);
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
+        pd.setTitle("Internal error");
+        return pd;
+    }
+
+    /**
+     * Handles failures to open a transaction.
+     *
+     * @param ex the transaction exception
+     * @return a problem detail response with status 503 Service Unavailable
+     */
+    @ExceptionHandler(CannotCreateTransactionException.class)
+    public ProblemDetail handleCannotCreateTransaction(CannotCreateTransactionException ex) {
+        return databaseUnavailable(ex);
+    }
+
+    /**
      * Handles generic domain exceptions.
      *
      * @param ex the root application exception
@@ -108,5 +159,30 @@ public class GlobalExceptionHandler {
         pd.setTitle("Internal error");
         pd.setDetail(ex.getMessage());
         return pd;
+    }
+
+    private ProblemDetail databaseUnavailable(Exception ex) {
+        log.error("Account database unavailable: {}", ex.getClass().getSimpleName());
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        pd.setTitle("Service temporarily unavailable");
+        pd.setDetail("The account database is temporarily unavailable. Please retry later.");
+        return pd;
+    }
+
+    private static boolean isInfrastructureFailure(DataAccessException ex) {
+        if (ex instanceof DataAccessResourceFailureException || ex instanceof TransientDataAccessException) {
+            return true;
+        }
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof SQLTransientConnectionException
+                    || t instanceof SQLNonTransientConnectionException
+                    || t instanceof SQLRecoverableException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 }
