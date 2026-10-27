@@ -1,8 +1,3 @@
-plugins {
-    id("org.springframework.boot")
-    id("io.spring.dependency-management")
-}
-
 group = "it.unibo.hermes.gateway"
 
 springBoot {
@@ -31,8 +26,4 @@ dependencies {
 
 tasks.bootJar {
     archiveFileName.set("gateway.jar")
-}
-
-tasks.named<Jar>("jar") {
-    enabled = false
 }

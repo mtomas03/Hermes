@@ -4,13 +4,11 @@ plugins {
 
 group = "it.unibo.hermes.client"
 
-application {
+springBoot {
     mainClass.set("it.unibo.hermes.client.HermesClientApp")
 }
 
 dependencies {
-    implementation(platform("org.springframework.boot:spring-boot-dependencies:3.2.5"))
-
     implementation("org.springframework:spring-context")
     implementation("jakarta.annotation:jakarta.annotation-api")
     implementation("org.springframework:spring-webflux")
@@ -33,4 +31,8 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter")
     testImplementation("org.springframework:spring-test")
     testImplementation("io.projectreactor:reactor-test")
+}
+
+tasks.bootJar {
+    archiveFileName.set("HermesClient.jar")
 }
