@@ -23,15 +23,13 @@ class JwtAuthenticationFilterTest {
     @Mock
     private JwtProvider jwtProvider;
     @Mock
-    private UserDetailsServiceImpl userDetailsService;
-    @Mock
     private FilterChain chain;
 
     private JwtAuthenticationFilter filter;
 
     @BeforeEach
     void setUp() {
-        filter = new JwtAuthenticationFilter(jwtProvider, userDetailsService);
+        filter = new JwtAuthenticationFilter(jwtProvider);
     }
 
     @AfterEach
@@ -46,8 +44,6 @@ class JwtAuthenticationFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(jwtProvider.isValid("valid-token")).thenReturn(true);
         when(jwtProvider.extractUsername("valid-token")).thenReturn("alice");
-        UserDetails details = User.withUsername("alice").password("x").roles("USER").build();
-        when(userDetailsService.loadUserByUsername("alice")).thenReturn(details);
 
         filter.doFilterInternal(request, response, chain);
 
@@ -55,6 +51,9 @@ class JwtAuthenticationFilterTest {
                 .isNotNull();
         assertThat(SecurityContextHolder.getContext().getAuthentication().getName())
                 .isEqualTo("alice");
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities())
+                .extracting(Object::toString)
+                .containsExactly("ROLE_USER");
         verify(chain).doFilter(request, response);
     }
 
@@ -94,7 +93,6 @@ class JwtAuthenticationFilterTest {
         filter.doFilterInternal(request, response, chain);
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verify(userDetailsService, never()).loadUserByUsername(anyString());
         verify(chain).doFilter(request, response);
     }
 

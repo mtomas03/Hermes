@@ -10,7 +10,7 @@ import java.util.Optional;
  * Spring Data JPA repository managing persistent operations and account lookups for {@link User} entities.
  */
 @Repository
-public interface UserRepository extends JpaRepository<User, Long> {
+public interface UserRepository extends JpaRepository<User, String> {
 
     /**
      * Finds a user entity by its unique username.
