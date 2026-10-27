@@ -12,7 +12,7 @@ import java.util.function.Supplier;
  */
 public final class Poller {
 
-    private static final Duration DEFAULT_INTERVAL = Duration.ofMillis(250);
+    private static final Duration DEFAULT_INTERVAL = Duration.ofSeconds(1);
 
     private Poller() {
     }
