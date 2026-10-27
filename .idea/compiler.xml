@@ -5,6 +5,9 @@
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="hermes.client" options="-parameters" />
+      <module name="hermes.client.main" options="-parameters" />
+      <module name="hermes.client.test" options="-parameters" />
       <module name="hermes.server.gateway" options="-parameters" />
       <module name="hermes.server.gateway.main" options="-parameters" />
       <module name="hermes.server.gateway.test" options="-parameters" />
