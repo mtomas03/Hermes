@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -61,7 +62,7 @@ public class AuthController {
                             log.warn("Login failed: {}", err.getMessage());
                             stateModel.setAuthState(AuthState.UNAUTHENTICATED);
                             stateModel.setStatusMessage("Login failed");
-                            onError.accept(friendlyError(err));
+                            onError.accept(userFriendlyError(err));
                         });
     }
 
@@ -86,19 +87,51 @@ public class AuthController {
                 })
                 .doOnError(err -> {
                     log.warn("Registration failed: {}", err.getMessage());
-                    onError.accept(friendlyError(err));
+                    stateModel.setStatusMessage("Registration failed");
+                    onError.accept(userFriendlyError(err));
                 })
                 .subscribe();
     }
 
     /**
-     * Logs the user out: disconnects WebSocket, clears state.
+     * Logs the user out.
      */
     public void logout() {
-        connectionController.disconnect();
-        persistence.clearLocalUser();
-        stateModel.clearSession();
-        syncController.resetSyncState();
+        try {
+            persistence.clearAuthToken();
+        } finally {
+            try {
+                connectionController.disconnect();
+            } catch (RuntimeException e) {
+                log.warn("Error while closing the connection during logout: {}", e.getMessage());
+            }
+            persistence.clearLocalUser();
+            stateModel.clearSession();
+            syncController.resetSyncState();
+            stateModel.setStatusMessage("Logged out");
+        }
+    }
+
+    /**
+     * Restores the previous session on application start,
+     * if a non-expired token and the local user are stored.
+     *
+     * @return {@code true} if a session was restored
+     */
+    public boolean restoreSession() {
+        Optional<AuthToken> token = persistence.loadValidAuthToken();
+        if (token.isEmpty()) {
+            return false;
+        }
+        Optional<User> user = persistence.loadLocalUser();
+        if (user.isEmpty()) {
+            persistence.clearAuthToken();
+            return false;
+        }
+        log.info("Restoring session for {}", user.get().username());
+        startSession(token.get(), user.get());
+        stateModel.setStatusMessage("Session restored");
+        return true;
     }
 
     private void handleLoginSuccess(AuthResponseDto resp) {
@@ -106,9 +139,15 @@ public class AuthController {
         AuthToken token = new AuthToken(resp.token(), expiresAt);
         User user = new User(resp.username());
 
+        persistence.saveAuthToken(token);
+        persistence.saveLocalUser(user);
+        startSession(token, user);
+        stateModel.setStatusMessage("Logged in");
+    }
+
+    private void startSession(AuthToken token, User user) {
         stateModel.setAuthToken(token);
         stateModel.setCurrentUser(user);
-        persistence.saveLocalUser(user);
 
         log.info("Authenticated as {}", user.username());
 
@@ -120,9 +159,13 @@ public class AuthController {
         stateModel.setAuthState(AuthState.AUTHENTICATED);
     }
 
-    private String friendlyError(Throwable e) {
+    private String userFriendlyError(Throwable e) {
         String msg = e.getMessage();
         if (msg == null) return "Unknown error.";
+        if (msg.contains("503"))
+            return "The service is temporarily unavailable. Please try again shortly.";
+        if (msg.contains("409"))
+            return "This username is already taken.";
         if (msg.contains("Invalid credentials") || msg.contains("401"))
             return "Invalid username or password.";
         if (msg.contains("connect") || msg.contains("refused"))

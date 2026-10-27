@@ -71,6 +71,8 @@ public class ConnectionController {
 
     /**
      * Wires callbacks on the WS service and initiates the STOMP connection.
+     *
+     * @param rawToken the JWT token to use for authentication
      */
     public void connect(String rawToken) {
         this.currentToken = rawToken;
@@ -104,6 +106,7 @@ public class ConnectionController {
 
     public void disconnect() {
         cancelPending();
+        this.currentToken = null;
         wsService.disconnect();
         stateModel.setConnectionState(ConnectionState.DISCONNECTED);
         stateModel.setStatusMessage("Disconnected");

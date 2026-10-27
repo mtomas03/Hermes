@@ -54,6 +54,13 @@ public class SQLiteDatabaseConnection {
                     )""");
 
             stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS auth_token (
+                        id         INTEGER PRIMARY KEY CHECK (id = 1),
+                        raw_token  TEXT    NOT NULL,
+                        expires_at INTEGER NOT NULL
+                    )""");
+
+            stmt.execute("""
                     CREATE TABLE IF NOT EXISTS conversation (
                         conversation_id       TEXT PRIMARY KEY,
                         recipient_username    TEXT NOT NULL

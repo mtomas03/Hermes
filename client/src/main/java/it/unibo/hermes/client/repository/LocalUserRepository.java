@@ -62,7 +62,7 @@ public class LocalUserRepository {
     public void clear() {
         try (Connection conn = db.getDataSource().getConnection();
              Statement stmt = conn.createStatement()) {
-            stmt.execute("DELETE FROM user");
+            stmt.executeUpdate("DELETE FROM user");
         } catch (SQLException e) {
             log.error("Failed to clear local user", e);
         }

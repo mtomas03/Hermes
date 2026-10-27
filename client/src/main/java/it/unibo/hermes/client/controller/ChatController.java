@@ -8,7 +8,6 @@ import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.service.LocalPersistenceService;
 import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.AuthService;
 import it.unibo.hermes.client.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,9 +49,9 @@ public class ChatController {
      */
     public void selectConversation(Conversation conv) {
         stateModel.setSelectedConversation(conv);
-        List<Message> msgs = persistence.loadMessages(conv.conversationId());
-        stateModel.replaceMessages(msgs);
-        log.debug("Selected {} - {} local messages", conv.conversationId(), msgs.size());
+        List<Message> messages = persistence.loadMessages(conv.conversationId());
+        stateModel.replaceMessages(messages);
+        log.debug("Selected {} - {} local messages", conv.conversationId(), messages.size());
 
         syncController.syncConversationIfNeeded(conv.conversationId());
     }
