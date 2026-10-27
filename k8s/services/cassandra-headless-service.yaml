@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-cassandra-headless
+  namespace: hermes-namespace
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: hermes-cassandra
+  ports:
+    - name: intra-node
+      port: 7000
+      targetPort: 7000
+    - name: cql
+      port: 9042
+      targetPort: 9042

@@ -9,7 +9,9 @@ resources:
   - services/postgres-service.yaml
   - statefulsets/postgres-statefulset.yaml
   - services/cassandra-service.yaml
+  - services/cassandra-headless-service.yaml
   - statefulsets/cassandra-statefulset.yaml
+  - statefulsets/cassandra-pdb.yaml
   - jobs/cassandra-schema-job.yaml
   - services/kafka-service.yaml
   - statefulsets/kafka-statefulset.yaml
