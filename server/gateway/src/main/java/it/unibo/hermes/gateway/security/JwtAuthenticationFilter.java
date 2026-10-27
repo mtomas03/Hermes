@@ -5,8 +5,11 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
@@ -22,19 +25,18 @@ import java.io.IOException;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+
     private final JwtProvider jwtProvider;
-    private final UserDetailsServiceImpl userDetailsService;
 
     /**
-     * Creates the filter with the JWT provider and user details service.
+     * Creates the filter with the JWT provider.
      *
-     * @param jwtProvider        the utility component handling token validation and parsing
-     * @param userDetailsService the service loading user security details
+     * @param jwtProvider the utility component handling token validation and parsing
      */
-    public JwtAuthenticationFilter(JwtProvider jwtProvider,
-                                   UserDetailsServiceImpl userDetailsService) {
+    public JwtAuthenticationFilter(JwtProvider jwtProvider) {
         this.jwtProvider = jwtProvider;
-        this.userDetailsService = userDetailsService;
     }
 
     /**
@@ -54,12 +56,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String token = extractToken(request);
+        boolean isTokenValid = token != null && jwtProvider.isValid(token);
+        if (token != null && !isTokenValid) {
+            log.warn("Rejected bearer token on {} {} (pod {})",
+                    request.getMethod(), request.getRequestURI(), System.getenv("HOSTNAME"));
+        }
 
-        if (token != null && jwtProvider.isValid(token)
-                && SecurityContextHolder.getContext().getAuthentication() == null) {
+        if (isTokenValid && SecurityContextHolder.getContext().getAuthentication() == null) {
 
             String username = jwtProvider.extractUsername(token);
-            UserDetails details = userDetailsService.loadUserByUsername(username);
+            UserDetails details = User
+                    .withUsername(username)
+                    .password("")
+                    .roles("USER")
+                    .build();
 
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(
