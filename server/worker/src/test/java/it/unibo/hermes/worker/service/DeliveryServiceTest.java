@@ -55,6 +55,7 @@ class DeliveryServiceTest {
         deliveryService.processMessage(event);
 
         verify(cassandraAdapter, never()).persistMessage(any());
+        verify(cassandraAdapter).reconcileConversationProjection(event.messageId());
         verifyNoInteractions(presenceAdapter, messageDeliveryProducer);
     }
 
