@@ -1,15 +1,11 @@
 package it.unibo.hermes.worker.adapter;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.entity.cassandra.ConversationByUser;
-import it.unibo.hermes.worker.entity.cassandra.MessageByConversation;
-import it.unibo.hermes.worker.entity.cassandra.MessageByConversationPrimaryKey;
 import it.unibo.hermes.worker.entity.cassandra.MessageById;
 import it.unibo.hermes.worker.event.MessageEvent;
 import it.unibo.hermes.worker.exception.PersistenceUnavailableException;
 import it.unibo.hermes.worker.repository.cassandra.ConversationByUserRepository;
-import it.unibo.hermes.worker.repository.cassandra.MessageByConversationRepository;
 import it.unibo.hermes.worker.repository.cassandra.MessageByIdRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +17,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +30,14 @@ public class CassandraAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(CassandraAdapter.class);
 
+    private static final String BY_ID_INSERT =
+            "INSERT INTO message_by_id (message_id, conversation_id, sender_username, recipient_username, "
+                    + "content, logical_timestamp, delivery_status) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, 'PENDING') IF NOT EXISTS";
+    private static final String BY_CONVERSATION_INSERT =
+            "INSERT INTO messages_by_conversation (conversation_id, logical_timestamp, message_id, "
+                    + "sender_username, recipient_username, content, delivery_status) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, 'PENDING') IF NOT EXISTS";
     private static final String BY_ID_UPDATE =
             "UPDATE message_by_id SET delivery_status = ? WHERE message_id = ?";
     private static final String BY_CONVERSATION_UPDATE =
@@ -43,7 +48,6 @@ public class CassandraAdapter {
                     + "WHERE conversation_id = ? AND logical_timestamp = ? AND message_id = ?";
 
     private final MessageByIdRepository messageByIdRepository;
-    private final MessageByConversationRepository conversationMessageRepository;
     private final ConversationByUserRepository conversationByUserRepository;
     /**
      * Complements Spring Data Repositories for low-level CQL execution and lightweight transactions (LWT).
@@ -54,72 +58,36 @@ public class CassandraAdapter {
 
     public CassandraAdapter(
             MessageByIdRepository messageByIdRepository,
-            MessageByConversationRepository messageByConversationRepository,
             ConversationByUserRepository conversationByUserRepository,
             CassandraOperations cassandraOperations) {
         this.messageByIdRepository = messageByIdRepository;
-        this.conversationMessageRepository = messageByConversationRepository;
         this.conversationByUserRepository = conversationByUserRepository;
         this.cassandraOperations = cassandraOperations;
     }
 
-    @NonNull
-    private static MessageByConversation getByConversation(MessageEvent event, UUID messageId) {
-        MessageByConversationPrimaryKey key = new MessageByConversationPrimaryKey(
-                event.conversationId(),
-                event.logicalTimestamp(),
-                messageId
-        );
-        return new MessageByConversation(
-                key,
-                event.senderUsername(),
-                event.recipientUsername(),
-                event.content(),
-                DeliveryStatus.PENDING.name()
-        );
-    }
-
     /**
-     * Persists a new message as PENDING across Cassandra tables
-     * and updates conversation mappings for both participants.
+     * Initialises a new message in {@code PENDING} status across Cassandra tables, ensuring idempotency
+     * and preventing delivery status regression in concurrent or duplicate execution scenarios.
      *
-     * @param event the message event to persist
-     * @throws PersistenceUnavailableException if Cassandra fails or the message already exists
+     * <p>This method is safe against duplicate Kafka events, retries and concurrent workers:
+     * <ol>
+     *   <li>The authoritative record in {@code message_by_id} is created using a conditional insert.
+     *       If rejected, the existing stored record is reloaded without overwriting its current delivery status.</li>
+     *   <li>Immutable message fields are verified against the stored record to detect data conflicts.</li>
+     *   <li>The projection row in {@code messages_by_conversation} is conditionally created and participant index
+     *       records in {@code conversation_by_user} are written.</li>
+     *   <li>The projection's delivery status is reconciled to match the authoritative status.</li>
+     * </ol>
+     *
+     * @param event the message event payload to persist
+     * @throws PersistenceUnavailableException if Cassandra is unreachable, immutable fields diverge or persistence fails
      */
     public void persistMessage(MessageEvent event) {
         UUID messageId = UUID.fromString(event.messageId());
 
         try {
-            Optional<MessageById> existing = messageByIdRepository.findById(messageId);
-            if (existing.isPresent()) {
-                log.debug("Message {} already exists with status {}, skipping insert",
-                        messageId, existing.get().getDeliveryStatus());
-                return;
-            }
-
-            conversationMessageRepository.save(getByConversation(event, messageId));
-
-            conversationByUserRepository.save(new ConversationByUser(
-                    event.senderUsername(),
-                    event.conversationId(),
-                    event.recipientUsername()
-            ));
-
-            conversationByUserRepository.save(new ConversationByUser(
-                    event.recipientUsername(),
-                    event.conversationId(),
-                    event.senderUsername()
-            ));
-
-            messageByIdRepository.save(new MessageById(
-                    messageId,
-                    event.conversationId(),
-                    event.senderUsername(),
-                    event.recipientUsername(),
-                    event.content(),
-                    event.logicalTimestamp(),
-                    DeliveryStatus.PENDING.name()
-            ));
+            MessageById authoritative = initializeAuthoritative(event, messageId);
+            completeFromAuthoritative(messageId.toString(), authoritative);
 
             log.debug("Message {} persisted and conversation indexed for {} and {}",
                     messageId, event.senderUsername(), event.recipientUsername());
@@ -196,6 +164,8 @@ public class CassandraAdapter {
      * Used when an event is recognised as already processed, so that
      * a previous run that stopped between the two writes does not leave the projection behind.
      *
+     * <p>A missing projection row or participant index is recreated from the authoritative data.
+     *
      * @param messageId the message identifier
      * @throws PersistenceUnavailableException if Cassandra fails or the two tables diverge
      */
@@ -206,8 +176,7 @@ public class CassandraAdapter {
             if (entityOpt.isEmpty()) {
                 return;
             }
-            MessageById entity = entityOpt.get();
-            projectToConversation(messageId, entity, storedStatus(messageId, entity));
+            completeFromAuthoritative(messageId, entityOpt.get());
         } catch (Exception e) {
             log.error("Failed to reconcile status projection of message {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot reconcile status for message " + messageId, e);
@@ -225,6 +194,81 @@ public class CassandraAdapter {
         return messageByIdRepository.findById(id)
                 .map(e -> !DeliveryStatus.PENDING.name().equals(e.getDeliveryStatus()))
                 .orElse(false);
+    }
+
+    private MessageById initializeAuthoritative(MessageEvent event, UUID messageId) {
+        Optional<MessageById> existing = messageByIdRepository.findById(messageId);
+        if (existing.isPresent()) {
+            log.debug("Message {} already exists with status {}, not re-initialising",
+                    messageId, existing.get().getDeliveryStatus());
+            verifyImmutableFields(event, existing.get());
+            return existing.get();
+        }
+
+        long logicalTimestamp = Objects.requireNonNull(event.logicalTimestamp(),
+                "logicalTimestamp is required to persist message " + messageId);
+        boolean applied = cassandraOperations.getCqlOperations().execute(BY_ID_INSERT,
+                messageId, event.conversationId(), event.senderUsername(), event.recipientUsername(),
+                event.content(), logicalTimestamp);
+        if (applied) {
+            log.debug("Message {} initialised as PENDING", messageId);
+            return new MessageById(messageId, event.conversationId(), event.senderUsername(),
+                    event.recipientUsername(), event.content(), logicalTimestamp, DeliveryStatus.PENDING.name());
+        }
+
+        MessageById winner = messageByIdRepository.findById(messageId).orElseThrow(() ->
+                new IllegalStateException("Insert of message " + messageId
+                        + " was rejected but the row cannot be read back"));
+        log.info("Message {} was initialised concurrently, continuing from status {}",
+                messageId, winner.getDeliveryStatus());
+        verifyImmutableFields(event, winner);
+        return winner;
+    }
+
+    private static void verifyImmutableFields(MessageEvent event, MessageById stored) {
+        List<String> mismatches = new ArrayList<>();
+        if (!Objects.equals(event.conversationId(), stored.getConversationId())) {
+            mismatches.add("conversationId");
+        }
+        if (!Objects.equals(event.senderUsername(), stored.getSenderUsername())) {
+            mismatches.add("senderUsername");
+        }
+        if (!Objects.equals(event.recipientUsername(), stored.getRecipientUsername())) {
+            mismatches.add("recipientUsername");
+        }
+        if (!Objects.equals(event.content(), stored.getContent())) {
+            mismatches.add("content");
+        }
+        if (!Objects.equals(event.logicalTimestamp(), stored.getLogicalTimestamp())) {
+            mismatches.add("logicalTimestamp");
+        }
+        if (!mismatches.isEmpty()) {
+            throw new IllegalStateException("Message " + stored.getMessageId()
+                    + " already exists with different immutable fields " + mismatches);
+        }
+    }
+
+    private void completeFromAuthoritative(String messageId, MessageById authoritative) {
+        UUID id = authoritative.getMessageId();
+
+        boolean created = cassandraOperations.getCqlOperations().execute(BY_CONVERSATION_INSERT,
+                authoritative.getConversationId(), authoritative.getLogicalTimestamp(), id,
+                authoritative.getSenderUsername(), authoritative.getRecipientUsername(),
+                authoritative.getContent());
+        log.debug("Message {} projection row {}", messageId, created ? "created" : "already present");
+
+        conversationByUserRepository.save(new ConversationByUser(
+                authoritative.getSenderUsername(),
+                authoritative.getConversationId(),
+                authoritative.getRecipientUsername()));
+        conversationByUserRepository.save(new ConversationByUser(
+                authoritative.getRecipientUsername(),
+                authoritative.getConversationId(),
+                authoritative.getSenderUsername()));
+
+        MessageById current = messageByIdRepository.findById(id).orElseThrow(() ->
+                new IllegalStateException("Message " + messageId + " disappeared while completing its rows"));
+        projectToConversation(messageId, current, storedStatus(messageId, current));
     }
 
     private void projectToConversation(String messageId, MessageById entity, DeliveryStatus status) {

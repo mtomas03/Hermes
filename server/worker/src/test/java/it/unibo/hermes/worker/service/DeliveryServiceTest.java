@@ -5,6 +5,7 @@ import it.unibo.hermes.worker.adapter.RedisPresenceAdapter;
 import it.unibo.hermes.worker.domain.DeliveryStatus;
 import it.unibo.hermes.worker.domain.PresenceInfo;
 import it.unibo.hermes.worker.event.MessageEvent;
+import it.unibo.hermes.worker.exception.PersistenceUnavailableException;
 import it.unibo.hermes.worker.producer.MessageDeliveryProducer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -114,5 +116,21 @@ class DeliveryServiceTest {
         verify(cassandraAdapter).persistMessage(event);
         verify(cassandraAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
         verifyNoInteractions(messageDeliveryProducer);
+    }
+
+    @Test
+    void persistenceFailureIsPropagatedForRetryAndNothingIsDeliveredOrAdvanced() {
+        MessageEvent event = new MessageEvent(
+                UUID.randomUUID().toString(), "alice-bob",
+                "alice", "bob", "hi", 1L);
+        when(cassandraAdapter.isAlreadyProcessed(any())).thenReturn(false);
+        doThrow(new PersistenceUnavailableException("Cassandra down",
+                new RuntimeException("timeout"))).when(cassandraAdapter).persistMessage(event);
+
+        assertThatThrownBy(() -> deliveryService.processMessage(event))
+                .isInstanceOf(PersistenceUnavailableException.class);
+
+        verifyNoInteractions(messageDeliveryProducer, presenceAdapter);
+        verify(cassandraAdapter, never()).updateMessageDeliveryStatus(any(), any());
     }
 }
