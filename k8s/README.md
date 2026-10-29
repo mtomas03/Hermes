@@ -7,9 +7,9 @@ All resources are deployed inside the `hermes-namespace` namespace:
 - **gateway-deployment**: Hermes Gateway (3 replicas), exposed through NGINX Ingress.
 - **postgres-statefulset**: PostgreSQL database (`hermes-postgres`) for accounts. Deliberately a **single instance** (ACID integrity, no failover); probes use `pg_isready`.
 - **redis-deployment**: Redis (`hermes-redis`) for user presence and message routing state.
-- **hermes-kafka**: Single-node Kafka broker (`hermes-kafka`) operating in KRaft mode.
+- **hermes-kafka**: Single-node Kafka broker (`hermes-kafka`) operating in KRaft mode (single point of failure, replication factor 1).
 - **cassandra-statefulset**: Cassandra cluster of 3 nodes (one PVC each, governed by the headless Service `hermes-cassandra-headless`; clients use the ClusterIP Service `hermes-cassandra`). Keyspace `hermes` uses `NetworkTopologyStrategy` with 3 replicas in `datacenter1`; the services use `LOCAL_QUORUM` (2 of 3), so one node can be down. A PodDisruptionBudget allows at most one voluntary disruption.
-- **worker-deployment**: single replica of the worker, which consumes messages from Kafka and writes them to Cassandra.
+- **worker-deployment**: 3 replicas of the worker, in the same Kafka consumer group `hermes-worker`, which consumes messages from Kafka and writes them to Cassandra. Replicas are stateless; correctness under concurrent processing relies on Cassandra lightweight transactions, not on Kafka partition ownership. Kafka topics are created with 3 partitions (`KAFKA_NUM_PARTITIONS`), so each replica can own one partition; topics that already exist keep their partition count (see below).
 - **cassandra-schema Job**: One-off Job (`cassandra-schema`) executing `schema.cql` to initialise the `hermes` keyspace and tables.
 - **NGINX Ingress**: Routes external traffic from `hermes.local` to `hermes-gateway` on port `80` while maintaining persistent WebSocket connections.
 
