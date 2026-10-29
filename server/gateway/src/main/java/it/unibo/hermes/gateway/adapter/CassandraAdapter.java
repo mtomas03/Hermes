@@ -2,15 +2,14 @@ package it.unibo.hermes.gateway.adapter;
 
 import it.unibo.hermes.gateway.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
-import it.unibo.hermes.gateway.entity.cassandra.MessageById;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.repository.cassandra.ConversationByUserRepository;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByConversationRepository;
-import it.unibo.hermes.gateway.repository.cassandra.MessageByIdRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.data.cassandra.core.CassandraOperations;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -24,17 +23,26 @@ public class CassandraAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(CassandraAdapter.class);
 
+    private static final String BY_CONVERSATION_INSERT =
+            "INSERT INTO messages_by_conversation (conversation_id, logical_timestamp, message_id, "
+                    + "sender_username, recipient_username, content, delivery_status) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS";
+    private static final String BY_ID_INSERT =
+            "INSERT INTO message_by_id (message_id, conversation_id, sender_username, recipient_username, "
+                    + "content, logical_timestamp, delivery_status) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS";
+
     private final MessageByConversationRepository messageByConversationRepository;
-    private final MessageByIdRepository messageByIdRepository;
     private final ConversationByUserRepository conversationByUserRepository;
+    private final CassandraOperations cassandraOperations;
 
     public CassandraAdapter(
             MessageByConversationRepository messageByConversationRepository,
-            MessageByIdRepository messageByIdRepository,
-            ConversationByUserRepository conversationByUserRepository) {
+            ConversationByUserRepository conversationByUserRepository,
+            CassandraOperations cassandraOperations) {
         this.messageByConversationRepository = messageByConversationRepository;
-        this.messageByIdRepository = messageByIdRepository;
         this.conversationByUserRepository = conversationByUserRepository;
+        this.cassandraOperations = cassandraOperations;
     }
 
     /**
@@ -65,28 +73,31 @@ public class CassandraAdapter {
      * A message is persisted during the gateway's fallback path (when Kafka is unavailable),
      * so that the same persistent invariants apply as in the worker's path.
      *
-     * @param messageByConversation the message entity to be saved
+     * @param messageByConversation the message entity to be persisted
      */
     public void saveFallback(MessageByConversation messageByConversation) {
         String sender = messageByConversation.getSenderUsername();
         String recipient = messageByConversation.getRecipientUsername();
         String conversationId = messageByConversation.getConversationId();
+        var messageId = messageByConversation.getMessageId();
+        long logicalTimestamp = messageByConversation.getLogicalTimestamp();
+        String content = messageByConversation.getContent();
+        String status = messageByConversation.getDeliveryStatus().name();
+        var cql = cassandraOperations.getCqlOperations();
 
-        messageByConversationRepository.save(messageByConversation);
+        cql.execute(BY_CONVERSATION_INSERT,
+                conversationId, logicalTimestamp, messageId, sender, recipient, content, status);
         conversationByUserRepository.save(new ConversationByUser(sender, conversationId, recipient));
         conversationByUserRepository.save(new ConversationByUser(recipient, conversationId, sender));
-        messageByIdRepository.save(new MessageById(
-                messageByConversation.getMessageId(),
-                conversationId,
-                sender,
-                recipient,
-                messageByConversation.getContent(),
-                messageByConversation.getLogicalTimestamp(),
-                messageByConversation.getDeliveryStatus().name()
-        ));
+        boolean applied = cql.execute(BY_ID_INSERT,
+                messageId, conversationId, sender, recipient, content, logicalTimestamp, status);
 
-        log.info("Message {} saved to Cassandra via Gateway fallback path",
-                messageByConversation.getMessageId());
+        if (applied) {
+            log.info("Message {} saved to Cassandra via Gateway fallback path", messageId);
+        } else {
+            log.info("Message {} already exists in Cassandra",
+                    messageId);
+        }
     }
 
     /**

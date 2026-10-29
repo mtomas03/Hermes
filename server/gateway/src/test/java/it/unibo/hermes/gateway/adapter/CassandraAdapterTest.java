@@ -3,11 +3,10 @@ package it.unibo.hermes.gateway.adapter;
 import it.unibo.hermes.gateway.domain.MessageStatus;
 import it.unibo.hermes.gateway.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.entity.cassandra.MessageByConversation;
-import it.unibo.hermes.gateway.entity.cassandra.MessageById;
 import it.unibo.hermes.gateway.repository.cassandra.ConversationByUserRepository;
 import it.unibo.hermes.gateway.repository.cassandra.MessageByConversationRepository;
-import it.unibo.hermes.gateway.repository.cassandra.MessageByIdRepository;
 import it.unibo.hermes.gateway.exception.PersistenceUnavailableException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -19,14 +18,22 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.cassandra.core.CassandraOperations;
+import org.springframework.data.cassandra.core.cql.CqlOperations;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -38,13 +45,21 @@ class CassandraAdapterTest {
     private MessageByConversationRepository messageByConversationRepository;
 
     @Mock
-    private MessageByIdRepository messageByIdRepository;
+    private CassandraOperations cassandraOperations;
+
+    @Mock
+    private CqlOperations cqlOperations;
 
     @Mock
     private ConversationByUserRepository conversationByUserRepository;
 
     @InjectMocks
     private CassandraAdapter cassandraAdapter;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(cassandraOperations.getCqlOperations()).thenReturn(cqlOperations);
+    }
 
     @Test
     void shouldFindConversationsByUsername() {
@@ -68,31 +83,28 @@ class CassandraAdapterTest {
     }
 
     @Test
-    void shouldSaveToBothRepositories() {
+    void fallbackCreatesBothRowsWithConditionalInsertsAndNeverWithAPlainSave() {
         UUID messageId = UUID.randomUUID();
         MessageByConversation fallbackMessage = new MessageByConversation(
-                messageId,
-                "alice-bob",
-                "alice",
-                "bob",
-                "Fallback content",
-                1L,
-                MessageStatus.STORED
-        );
+                messageId, "alice-bob",
+                "alice", "bob",
+                "Fallback content", 1L, MessageStatus.STORED);
+        when(cqlOperations.execute(startsWith("INSERT"), any(Object[].class)))
+                .thenReturn(true);
 
         cassandraAdapter.saveFallback(fallbackMessage);
 
-        verify(messageByConversationRepository).save(fallbackMessage);
-        ArgumentCaptor<MessageById> byIdCaptor = ArgumentCaptor.forClass(MessageById.class);
-        verify(messageByIdRepository).save(byIdCaptor.capture());
-        MessageById savedById = byIdCaptor.getValue();
-        assertThat(savedById.getMessageId()).isEqualTo(messageId);
-        assertThat(savedById.getConversationId()).isEqualTo("alice-bob");
-        assertThat(savedById.getSenderUsername()).isEqualTo("alice");
-        assertThat(savedById.getRecipientUsername()).isEqualTo("bob");
-        assertThat(savedById.getContent()).isEqualTo("Fallback content");
-        assertThat(savedById.getLogicalTimestamp()).isEqualTo(1L);
-        assertThat(savedById.getDeliveryStatus()).isEqualTo(MessageStatus.STORED.name());
+        verify(cqlOperations).execute(
+                argThat((String cql) -> cql.startsWith("INSERT INTO messages_by_conversation")
+                        && cql.contains("IF NOT EXISTS")),
+                eq("alice-bob"), eq(1L), eq(messageId), eq("alice"), eq("bob"), eq("Fallback content"),
+                eq("STORED"));
+        verify(cqlOperations).execute(
+                argThat((String cql) -> cql.startsWith("INSERT INTO message_by_id")
+                        && cql.contains("IF NOT EXISTS")),
+                eq(messageId), eq("alice-bob"), eq("alice"), eq("bob"), eq("Fallback content"), eq(1L),
+                eq("STORED"));
+        verify(messageByConversationRepository, never()).save(any());
     }
 
     @Test
@@ -105,10 +117,11 @@ class CassandraAdapterTest {
         cassandraAdapter.saveFallback(message);
 
         ArgumentCaptor<ConversationByUser> indexes = ArgumentCaptor.forClass(ConversationByUser.class);
-        InOrder order = inOrder(messageByConversationRepository, conversationByUserRepository, messageByIdRepository);
-        order.verify(messageByConversationRepository).save(message);
+        InOrder order = inOrder(cqlOperations, conversationByUserRepository);
+        order.verify(cqlOperations).execute(startsWith("INSERT INTO messages_by_conversation"),
+                any(Object[].class));
         order.verify(conversationByUserRepository, times(2)).save(indexes.capture());
-        order.verify(messageByIdRepository).save(any(MessageById.class));
+        order.verify(cqlOperations).execute(startsWith("INSERT INTO message_by_id"), any(Object[].class));
 
         assertThat(indexes.getAllValues())
                 .extracting(ConversationByUser::getUsername,
@@ -117,6 +130,37 @@ class CassandraAdapterTest {
                 .containsExactlyInAnyOrder(
                         org.assertj.core.groups.Tuple.tuple("alice", "alice-bob", "bob"),
                         org.assertj.core.groups.Tuple.tuple("bob", "alice-bob", "alice"));
+    }
+
+    @Test
+    void fallbackOnAMessageTheWorkerAlreadyAdvancedIsARejectedInsertNotAnErrorAndNeverWritesStored() {
+        MessageByConversation message = new MessageByConversation(
+                UUID.randomUUID(), "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.STORED);
+        // both conditional inserts are rejected: the rows exist
+        when(cqlOperations.execute(startsWith("INSERT"), any(Object[].class))).thenReturn(false);
+
+        assertThatCode(() -> cassandraAdapter.saveFallback(message)).doesNotThrowAnyException();
+
+        // the only statements executed are the two conditional inserts
+        verify(cqlOperations, times(2)).execute(startsWith("INSERT"), any(Object[].class));
+        verify(cqlOperations, never()).execute(startsWith("UPDATE"), any(Object[].class));
+        verify(messageByConversationRepository, never()).save(any());
+    }
+
+    @Test
+    void fallbackPropagatesCassandraErrorsInsteadOfTreatingThemAsRejections() {
+        MessageByConversation message = new MessageByConversation(
+                UUID.randomUUID(), "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.STORED);
+        when(cqlOperations.execute(startsWith("INSERT INTO messages_by_conversation"), any(Object[].class)))
+                .thenThrow(new DataAccessResourceFailureException("no node available"));
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(message))
+                .isInstanceOf(DataAccessResourceFailureException.class);
+        verify(cqlOperations, never()).execute(startsWith("INSERT INTO message_by_id"), any(Object[].class));
     }
 
     @Test
