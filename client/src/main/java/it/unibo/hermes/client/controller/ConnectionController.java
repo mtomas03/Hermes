@@ -8,6 +8,7 @@ import it.unibo.hermes.client.dto.SystemMessageDto;
 import it.unibo.hermes.client.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.model.state.ConnectionState;
 import it.unibo.hermes.client.service.MessageService;
@@ -16,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -32,11 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ConnectionController {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionController.class);
-
-    private final WebSocketService wsService;
-    private final ClientStateModel stateModel;
-    private final AppProperties props;
-    private final MessageService msgService;
+    private static final Set<String> PERMANENT_REJECTIONS =
+            Set.of("MISSING_RECIPIENT", "MISSING_CONTENT", "SELF_SEND", "INVALID_CONVERSATION");
 
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -45,15 +44,14 @@ public class ConnectionController {
                 return t;
             });
 
+    private final WebSocketService wsService;
+    private final ClientStateModel stateModel;
+    private final AppProperties props;
+    private final MessageService msgService;
     private final AtomicInteger retryCount = new AtomicInteger(0);
     private ScheduledFuture<?> pending = null;
     private volatile String currentToken;
-
-    /**
-     * Invoked once after a successful STOMP handshake (and subscriptions).
-     */
-    private volatile Runnable onConnectedCallback = () -> {
-    };
+    private volatile Runnable onConnectedCallback = () -> {};
 
     public ConnectionController(WebSocketService wsService,
                                 ClientStateModel stateModel,
@@ -65,8 +63,13 @@ public class ConnectionController {
         this.msgService = msgService;
     }
 
-    public void setOnConnectedCallback(Runnable cb) {
-        this.onConnectedCallback = cb;
+    /**
+     * Sets a callback to be executed when the WebSocket connection is established.
+     *
+     * @param callback the callback to execute on connection
+     */
+    public void setOnConnectedCallback(Runnable callback) {
+        this.onConnectedCallback = callback;
     }
 
     /**
@@ -84,6 +87,7 @@ public class ConnectionController {
             onConnectedCallback.run();
         });
 
+        wsService.setOnReadyToSend(this::scheduleOutboxFlush);
         wsService.setOnMessage(this::handleInboundMessage);
         wsService.setOnAck(this::handleAck);
         wsService.setOnAppError(this::handleAppError);
@@ -100,10 +104,13 @@ public class ConnectionController {
         });
 
         stateModel.setConnectionState(ConnectionState.CONNECTING);
-        stateModel.setStatusMessage("Connecting...");
+        stateModel.setStatusMessage("Connecting");
         wsService.connect(rawToken);
     }
 
+    /**
+     * Disconnects the WebSocket and cancels any pending reconnect attempts.
+     */
     public void disconnect() {
         cancelPending();
         this.currentToken = null;
@@ -140,6 +147,24 @@ public class ConnectionController {
 
     private void handleAppError(ErrorDto err) {
         log.warn("Server rejected message [{}]: {} - {}", err.messageId(), err.code(), err.reason());
+        if (err.messageId() != null && PERMANENT_REJECTIONS.contains(err.code())) {
+            msgService.markRejected(err.messageId());
+        }
+    }
+
+    private void scheduleOutboxFlush() {
+        scheduler.execute(() -> {
+            User self = stateModel.getCurrentUser();
+            if (self == null) {
+                log.warn("Outbox not flushed: no local user");
+                return;
+            }
+            try {
+                msgService.flushOutbox(self.username());
+            } catch (RuntimeException e) {
+                log.warn("Outbox flush failed, messages stay pending: {}", e.getMessage());
+            }
+        });
     }
 
     private void handleSystemMessage(SystemMessageDto msg) {
@@ -158,7 +183,7 @@ public class ConnectionController {
         if (attempt > props.getReconnectMaxAttempts()) {
             log.error("Max reconnect attempts ({}) reached", props.getReconnectMaxAttempts());
             stateModel.setConnectionState(ConnectionState.FAILED);
-            stateModel.setStatusMessage("Connection failed – please restart");
+            stateModel.setStatusMessage("Connection failed - please restart");
             return;
         }
 
@@ -169,7 +194,7 @@ public class ConnectionController {
 
         log.info("Reconnect attempt {} in {} ms", attempt, delay);
         stateModel.setConnectionState(ConnectionState.RECONNECTING);
-        stateModel.setStatusMessage("Reconnecting (attempt " + attempt + ")…");
+        stateModel.setStatusMessage("Reconnecting (attempt " + attempt + ")");
 
         pending = scheduler.schedule(() -> {
             log.info("Attempting reconnect #{}", attempt);
