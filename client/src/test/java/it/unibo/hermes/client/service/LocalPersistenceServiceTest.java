@@ -41,16 +41,16 @@ class LocalPersistenceServiceTest {
     }
 
     @Test
-    void savingAMessageShouldInsertItAndBumpConversationActivity() {
+    void savingAMessageShouldUpsertIt() {
         Message msg = new Message(
                 "m1", "alice-bob", "alice", "bob",
                 "hi", 1L, MessageStatus.SENT);
-        when(messageRepository.insertIfAbsent(msg)).thenReturn(true);
+        when(messageRepository.upsertMessage(msg)).thenReturn(true);
 
         boolean result = service.saveMessage(msg);
 
         assertTrue(result);
-        verify(messageRepository).insertIfAbsent(msg);
+        verify(messageRepository).upsertMessage(msg);
     }
 
     @Test
@@ -58,7 +58,7 @@ class LocalPersistenceServiceTest {
         Message msg = new Message(
                 "m1", "alice-bob", "alice", "bob",
                 "hi", 1L, MessageStatus.SENT);
-        when(messageRepository.insertIfAbsent(msg)).thenReturn(false);
+        when(messageRepository.upsertMessage(msg)).thenReturn(false);
 
         boolean result = service.saveMessage(msg);
 
