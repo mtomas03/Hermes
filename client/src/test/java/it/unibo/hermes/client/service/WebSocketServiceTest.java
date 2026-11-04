@@ -2,6 +2,7 @@ package it.unibo.hermes.client.service;
 
 import it.unibo.hermes.client.config.AppProperties;
 import it.unibo.hermes.client.dto.DeliveryAckDto;
+import it.unibo.hermes.client.dto.OutboundMessageDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,7 +16,10 @@ import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -25,6 +29,7 @@ import static org.mockito.Mockito.*;
 class WebSocketServiceTest {
 
     private static final String ACK_DESTINATION = "/app/chat.ack";
+    private static final String MESSAGE_DESTINATION = "/app/chat.sendMessage";
 
     @Mock
     private WebSocketStompClient stompClient;
@@ -38,6 +43,7 @@ class WebSocketServiceTest {
         AppProperties props = new AppProperties();
         ReflectionTestUtils.setField(props, "wsUrl", "ws://localhost/ws");
         ReflectionTestUtils.setField(props, "stompSendAckDestination", ACK_DESTINATION);
+        ReflectionTestUtils.setField(props, "stompSendDestination", MESSAGE_DESTINATION);
         service = new WebSocketService(stompClient, props);
     }
 
@@ -58,7 +64,6 @@ class WebSocketServiceTest {
         connectWith(stompSession);
 
         service.sendAck("m1");
-        service.flushPendingAcks();
 
         verify(stompSession, times(1))
                 .send(eq(ACK_DESTINATION), eq(new DeliveryAckDto("m1")));
@@ -73,9 +78,8 @@ class WebSocketServiceTest {
                 .thenReturn(null);
 
         service.sendAck("m1");
-        service.flushPendingAcks();
 
-        verify(stompSession, times(2))
+        verify(stompSession, times(1))
                 .send(eq(ACK_DESTINATION), eq(new DeliveryAckDto("m1")));
     }
 
@@ -88,6 +92,43 @@ class WebSocketServiceTest {
         connectWith(stompSession);
 
         verify(stompSession, never()).send(anyString(), any());
+    }
+
+    @Test
+    void readyToSendCallbackRunsOnlyOnceTheSessionCanBeUsedToSend() {
+        when(stompSession.isConnected()).thenReturn(true);
+        AtomicBoolean sentFromCallback = new AtomicBoolean();
+        service.setOnReadyToSend(() -> sentFromCallback.set(service.sendMessage(createOutboundMessage())));
+
+        connectWith(stompSession);
+
+        // the session is already registered when the callback runs, so a flush is performed and the message is sent
+        assertTrue(sentFromCallback.get());
+        verify(stompSession).send(eq(MESSAGE_DESTINATION), eq(createOutboundMessage()));
+    }
+
+    @Test
+    void sendMessageWithoutASessionReportsFailureWithoutThrowing() {
+        assertFalse(service.sendMessage(createOutboundMessage()));
+
+        verifyNoInteractions(stompSession);
+    }
+
+    @Test
+    void sendMessageOnASessionThatClosedMeanwhileReportsFailureInsteadOfThrowing() {
+        when(stompSession.isConnected()).thenReturn(true);
+        connectWith(stompSession);
+        when(stompSession.send(eq(MESSAGE_DESTINATION), any(OutboundMessageDto.class)))
+                .thenThrow(new IllegalStateException("Connection closed"));
+
+        assertFalse(service.sendMessage(createOutboundMessage()));
+    }
+
+    private OutboundMessageDto createOutboundMessage() {
+        return new OutboundMessageDto(
+                "m1", "alice-bob",
+                "alice", "bob",
+                "hi " + "m1", 1L);
     }
 
     private void connectWith(StompSession session) {

@@ -22,7 +22,6 @@ import java.util.List;
 public class SyncService {
 
     private static final Logger log = LoggerFactory.getLogger(SyncService.class);
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private final WebClient webClient;
     private final AppProperties props;
@@ -91,6 +90,8 @@ public class SyncService {
      */
     public void applySync(SyncResponseDto response, String localUsername) {
         for (var dto : response.messages()) {
+            MessageStatus serverMessageStatus = parseStatus(dto.messageStatus());
+
             Message msg = new Message(
                     dto.messageId(),
                     dto.conversationId(),
@@ -98,7 +99,7 @@ public class SyncService {
                     dto.recipientUsername(),
                     dto.content(),
                     dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L,
-                    MessageStatus.SENT);
+                    serverMessageStatus);
 
             boolean persisted = persistence.saveMessage(msg);
 
@@ -107,20 +108,32 @@ public class SyncService {
                         response.conversationId(),
                         dto.logicalTimestamp());
             }
-
             if (!persisted) {
                 log.error("Could not persist synced message {} - it will not be acknowledged", dto.messageId());
                 continue;
             }
+
             if (needsAcknowledgement(dto, localUsername)) {
                 webSocketService.sendAck(dto.messageId());
+                persistence.updateMessageStatus(dto.messageId(), MessageStatus.ACKNOWLEDGED);
             }
         }
     }
 
-    private static boolean needsAcknowledgement(InboundMessageDto dto, String localUsername) {
+    private MessageStatus parseStatus(String statusStr) {
+        if (statusStr == null || statusStr.isBlank()) {
+            return MessageStatus.STORED;
+        }
+        try {
+            return MessageStatus.valueOf(statusStr.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return MessageStatus.STORED;
+        }
+    }
+
+    private boolean needsAcknowledgement(InboundMessageDto dto, String localUsername) {
         return localUsername != null
                 && localUsername.equalsIgnoreCase(dto.recipientUsername())
-                && !ACKNOWLEDGED.equals(dto.messageStatus());
+                && !MessageStatus.ACKNOWLEDGED.name().equalsIgnoreCase(dto.messageStatus());
     }
 }
