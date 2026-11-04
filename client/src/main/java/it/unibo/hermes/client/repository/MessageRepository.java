@@ -53,6 +53,37 @@ public class MessageRepository {
     }
 
     /**
+     * Inserts a message if absent or updates its status if it already exists.
+     *
+     * @param msg the message to persist or update
+     * @return {@code true} if successful, {@code false} otherwise
+     */
+    public boolean upsertMessage(Message msg) {
+        String sql = """
+            INSERT INTO message
+                (message_id, conversation_id, sender_username, recipient_username,
+                 content, logical_timestamp, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET status = excluded.status
+            """;
+        try (Connection conn = db.getDataSource().getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, msg.getMessageId());
+            ps.setString(2, msg.getConversationId());
+            ps.setString(3, msg.getSenderUsername());
+            ps.setString(4, msg.getRecipientUsername());
+            ps.setString(5, msg.getContent());
+            ps.setLong(6, msg.getLogicalTimestamp());
+            ps.setString(7, msg.getStatus().name());
+            ps.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            log.error("Failed to upsert message {}", msg.getMessageId(), e);
+            return false;
+        }
+    }
+
+    /**
      * Updates the status of a message.
      *
      * @param messageId     the identifier of the message to update
@@ -92,6 +123,32 @@ public class MessageRepository {
             }
         } catch (SQLException e) {
             log.error("Failed to load messages for conversation {}", conversationId, e);
+        }
+        return result;
+    }
+
+    /**
+     * Retrieves the messages sent by {@code senderUsername} that the server has not confirmed yet
+     * (status {@link MessageStatus#PENDING}), in the order in which they were created locally.
+     *
+     * @param senderUsername the local user who created the messages
+     * @return the unconfirmed outbound messages, oldest first
+     */
+    public List<Message> findPendingBySender(String senderUsername) {
+        String sql = """
+                SELECT * FROM message
+                WHERE status = 'PENDING' AND sender_username = ?
+                ORDER BY rowid
+                """;
+        List<Message> result = new ArrayList<>();
+        try (Connection conn = db.getDataSource().getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, senderUsername);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) result.add(mapRow(rs));
+            }
+        } catch (SQLException e) {
+            log.error("Failed to load pending messages of {}", senderUsername, e);
         }
         return result;
     }

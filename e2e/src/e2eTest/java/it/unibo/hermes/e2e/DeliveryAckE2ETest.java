@@ -1,6 +1,7 @@
 package it.unibo.hermes.e2e;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DeliveryAckE2ETest {
 
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
@@ -58,9 +58,9 @@ class DeliveryAckE2ETest {
         InboundMessageDto acknowledged = Poller.pollUntil(
                 () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT),
                 TIMEOUT,
-                "server-side delivery state of message " + messageId + " to become " + ACKNOWLEDGED);
+                "server-side delivery state of message " + messageId + " to become " + MessageStatus.ACKNOWLEDGED);
 
-        assertEquals(ACKNOWLEDGED, acknowledged.messageStatus(),
+        assertEquals(MessageStatus.ACKNOWLEDGED.name(), acknowledged.messageStatus(),
                 "MessageCreated/DeliveryMessage alone must not be mistaken for a completed ACK");
     }
 
@@ -77,9 +77,7 @@ class DeliveryAckE2ETest {
         String conversationId = TestIds.conversationId(alice.getUsername(), bob.getUsername());
         String messageId = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody(TestIds.shortId()));
 
-        Poller.pollUntil(() -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                TIMEOUT, "message " + messageId + " to be delivered and ACKed before duplicate-sync check");
+        alice.awaitAcknowledged(conversationId, messageId, TIMEOUT);
 
         bob.syncAndPersist(conversationId, TIMEOUT);
         bob.syncAndPersist(conversationId, TIMEOUT);

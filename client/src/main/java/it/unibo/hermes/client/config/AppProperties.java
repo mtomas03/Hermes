@@ -60,6 +60,9 @@ public class AppProperties {
     @Value("${hermes.stomp.subscribe.system:/user/queue/system}")
     private String stompSystemDestination;
 
+    @Value("${hermes.client.heartbeat-interval-ms:10000}")
+    private long heartbeatIntervalMs;
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -126,5 +129,9 @@ public class AppProperties {
 
     public String getStompSystemDestination() {
         return stompSystemDestination;
+    }
+
+    public long getHeartbeatIntervalMs() {
+        return heartbeatIntervalMs;
     }
 }

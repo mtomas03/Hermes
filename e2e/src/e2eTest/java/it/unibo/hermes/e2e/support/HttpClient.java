@@ -11,17 +11,16 @@ import java.time.Duration;
  */
 public final class HttpClient {
 
-    private HttpClient() {}
-
-    public record Response(int status, String body) {}
+    private HttpClient() {
+    }
 
     /**
      * Performs a GET request to the given path
      * with the given authorisation header and timeout.
      *
-     * @param path the path to call
+     * @param path          the path to call
      * @param authorisation the authorisation header, or null if none
-     * @param timeout the timeout for the request
+     * @param timeout       the timeout for the request
      * @return the response, never null
      */
     public static Response get(String path, String authorisation, Duration timeout) {
@@ -31,8 +30,8 @@ public final class HttpClient {
     /**
      * Performs a POST request to the given path with the given JSON body and timeout.
      *
-     * @param path the path to call
-     * @param json the JSON body to send
+     * @param path    the path to call
+     * @param json    the JSON body to send
      * @param timeout the timeout for the request
      * @return the response, never null
      */
@@ -66,5 +65,8 @@ public final class HttpClient {
                         .map(b -> new Response(resp.statusCode().value(), b)))
                 .block(timeout);
         return r == null ? new Response(-1, "") : r;
+    }
+
+    public record Response(int status, String body) {
     }
 }

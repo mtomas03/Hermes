@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.time.Duration;
 import java.util.List;
 
+import static it.unibo.hermes.e2e.support.TestClient.ids;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -24,7 +25,6 @@ class CassandraRestartRecoveryE2ETest {
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
     private static final Duration ROLLOUT_TIMEOUT = Duration.ofSeconds(300);
     private static final Duration RECOVERY_TIMEOUT = Duration.ofSeconds(240);
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
@@ -53,10 +53,7 @@ class CassandraRestartRecoveryE2ETest {
         String before = alice.sendMessageTo(bob.getUsername(), body);
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, before), TIMEOUT,
                 "message " + before + " to reach " + bob.getUsername());
-        InboundMessageDto baseline = Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, before, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                TIMEOUT, "message " + before + " to be persisted and ACKNOWLEDGED before the restart");
+        InboundMessageDto baseline = alice.awaitAcknowledged(conversationId, before, TIMEOUT);
         assertEquals(body, baseline.content());
 
         Kubectl.restartStatefulSetAndAwait("cassandra-statefulset", E2EConfig.get().namespace(), ROLLOUT_TIMEOUT);
@@ -74,19 +71,12 @@ class CassandraRestartRecoveryE2ETest {
         String after = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("afterCassandraRestart"));
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, after), RECOVERY_TIMEOUT,
                 "message " + after + " to be delivered in real time after the Cassandra restart");
-        Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, after, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                RECOVERY_TIMEOUT, "message " + after + " to be persisted and ACKNOWLEDGED after the restart");
+        alice.awaitAcknowledged(conversationId, after, RECOVERY_TIMEOUT);
 
         // convergence: both participants see the same history, in order, without duplicates
         List<String> expected = List.of(before, after);
         assertEquals(expected, ids(alice.syncConversation(conversationId, TIMEOUT).messages()));
         assertEquals(expected, ids(bob.syncAndPersist(conversationId, TIMEOUT)));
         assertEquals(expected.size(), bob.localMessages(conversationId).size(), "no local duplicates");
-    }
-
-    private static List<String> ids(List<InboundMessageDto> messages) {
-        return messages.stream().map(InboundMessageDto::messageId).toList();
     }
 }

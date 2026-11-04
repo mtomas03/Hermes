@@ -84,6 +84,81 @@ class ConnectionControllerTest {
     }
 
     @Test
+    void sessionReadyFlushesTheOutboxOfTheLocalUser() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        controller.connect("token123");
+        verify(wsService).setOnReadyToSend(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+
+        verify(msgService, timeout(ASYNC_TIMEOUT_MS)).flushOutbox("alice");
+    }
+
+    @Test
+    void outboxFlushIsIndependentOfTheReplaceablePostConnectCallback() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        controller.setOnConnectedCallback(() -> {
+        });
+        controller.connect("token123");
+        verify(wsService).setOnReadyToSend(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+
+        verify(msgService, timeout(ASYNC_TIMEOUT_MS)).flushOutbox("alice");
+    }
+
+    @Test
+    void sessionReadyWithoutALocalUserDoesNotFlushAnyOutbox() throws InterruptedException {
+        when(stateModel.getCurrentUser()).thenReturn(null);
+        controller.connect("token123");
+        verify(wsService).setOnReadyToSend(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+        Thread.sleep(200);
+
+        verify(msgService, never()).flushOutbox(any());
+    }
+
+    @Test
+    void failedFlushDoesNotBreakTheControllerAndTheNextSessionFlushesAgain() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        when(msgService.flushOutbox("alice"))
+                .thenThrow(new IllegalStateException("db busy")).thenReturn(1);
+        controller.connect("token123");
+        verify(wsService).setOnReadyToSend(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+        runnableCaptor.getValue().run();
+
+        verify(msgService, timeout(ASYNC_TIMEOUT_MS).times(2))
+                .flushOutbox("alice");
+    }
+
+    @Test
+    void permanentServerRejectionMarksTheMessageFailed() {
+        controller.connect("token123");
+        verify(wsService).setOnAppError(appErrorCaptor.capture());
+
+        appErrorCaptor.getValue().accept(
+                new ErrorDto("INVALID_CONVERSATION", "bad conversation", "m1"));
+
+        verify(msgService).markRejected("m1");
+    }
+
+    @Test
+    void transientServerRejectionKeepsTheMessageInTheOutbox() {
+        controller.connect("token123");
+        verify(wsService).setOnAppError(appErrorCaptor.capture());
+
+        appErrorCaptor.getValue().accept(
+                new ErrorDto("DELIVERY_REJECTED", "storage unavailable", "m1"));
+        appErrorCaptor.getValue().accept(
+                new ErrorDto("MALFORMED_MESSAGE", "malformed", null));
+
+        verify(msgService, never()).markRejected(any());
+    }
+
+    @Test
     void disconnectShouldStopWebSocketAndMoveToDisconnectedState() {
         controller.disconnect();
 
@@ -187,20 +262,6 @@ class ConnectionControllerTest {
         ackCaptor.getValue().accept(ack);
 
         verify(msgService).acknowledgeDelivery("m1");
-    }
-
-    @Test
-    void appErrorShouldNotThrowAndShouldNotTouchMessageService() {
-        controller.connect("token123");
-        verify(wsService).setOnAppError(appErrorCaptor.capture());
-        ErrorDto err = new ErrorDto(
-                "MISSING_RECIPIENT",
-                "Field 'recipientUsername' is required",
-                "m1");
-
-        appErrorCaptor.getValue().accept(err);
-
-        verifyNoInteractions(msgService);
     }
 
     @Test

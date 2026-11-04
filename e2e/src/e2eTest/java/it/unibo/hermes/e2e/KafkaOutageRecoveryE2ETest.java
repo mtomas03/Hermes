@@ -1,6 +1,7 @@
 package it.unibo.hermes.e2e;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -8,9 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Duration;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * End-to-End test suite for Kafka unavailability and recovery.
@@ -25,7 +24,6 @@ class KafkaOutageRecoveryE2ETest {
 
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
     private static final Duration KAFKA_TIMEOUT = Duration.ofSeconds(180);
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
     private static final String STATEFUL_SET = "kafka-statefulset";
     private static final String APP_LABEL = "hermes-kafka";
 
@@ -70,7 +68,7 @@ class KafkaOutageRecoveryE2ETest {
                 () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT), KAFKA_TIMEOUT,
                 "message " + messageId + " to be persisted server-side while Kafka is down");
         assertEquals(body, persisted.content());
-        assertNotEquals(ACKNOWLEDGED, persisted.messageStatus(), "nobody could have acknowledged it yet");
+        assertNotEquals(MessageStatus.ACKNOWLEDGED.name(), persisted.messageStatus(), "nobody could have acknowledged it yet");
 
         assertTrue(bob.findLocalMessage(conversationId, messageId).isEmpty(),
                 "no real-time delivery is possible while Kafka is down");
@@ -85,23 +83,17 @@ class KafkaOutageRecoveryE2ETest {
                         + " through full synchronization");
         assertTrue(bob.findLocalMessage(conversationId, messageId).isPresent());
 
-        Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                KAFKA_TIMEOUT, "recovered message " + messageId + " to be ACKNOWLEDGED server-side");
+        alice.awaitAcknowledged(conversationId, messageId, KAFKA_TIMEOUT);
 
         bob.syncAndPersist(conversationId, TIMEOUT);
         assertEquals(1, bob.localMessages(conversationId).stream()
                 .filter(m -> m.getMessageId().equals(messageId)).count(), "no local duplicates after re-sync");
-        assertEquals(ACKNOWLEDGED, alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
+        assertEquals(MessageStatus.ACKNOWLEDGED.name(), alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
                 .orElseThrow().messageStatus(), "re-sync must not regress the acknowledged state");
 
         String afterId = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("afterRecovery"));
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, afterId), KAFKA_TIMEOUT,
                 "real-time delivery of " + afterId + " after Kafka recovered");
-        Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, afterId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                KAFKA_TIMEOUT, "message " + afterId + " to be ACKNOWLEDGED after Kafka recovered");
+        alice.awaitAcknowledged(conversationId, afterId, KAFKA_TIMEOUT);
     }
 }

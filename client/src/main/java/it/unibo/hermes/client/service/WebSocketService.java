@@ -50,38 +50,85 @@ public class WebSocketService {
     };
     private volatile Runnable onDisconnected = () -> {
     };
+    private volatile Runnable onReadyToSend = () -> {
+    };
 
     public WebSocketService(WebSocketStompClient stompClient, AppProperties props) {
         this.stompClient = stompClient;
         this.props = props;
     }
 
-    public void setOnMessage(Consumer<InboundMessageDto> cb) {
-        this.onMessage = cb;
+    /**
+     * Registers the callback to run each time a new message is received from the Gateway.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnMessage(Consumer<InboundMessageDto> callback) {
+        this.onMessage = callback;
     }
 
-    public void setOnAck(Consumer<AckDto> cb) {
-        this.onAck = cb;
+    /**
+     * Registers the callback to run each time a new ACK is received from the Gateway.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnAck(Consumer<AckDto> callback) {
+        this.onAck = callback;
     }
 
-    public void setOnAppError(Consumer<ErrorDto> cb) {
-        this.onAppError = cb;
+    /**
+     * Registers the callback to run each time a new application-level error is received from the Gateway.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnAppError(Consumer<ErrorDto> callback) {
+        this.onAppError = callback;
     }
 
-    public void setOnSystemMessage(Consumer<SystemMessageDto> cb) {
-        this.onSystemMessage = cb;
+    /**
+     * Registers the callback to run each time a new system-level message is received from the Gateway.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnSystemMessage(Consumer<SystemMessageDto> callback) {
+        this.onSystemMessage = callback;
     }
 
-    public void setOnConnected(Runnable cb) {
-        this.onConnected = cb;
+    /**
+     * Registers the callback to run each time a new STOMP session is established.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnConnected(Runnable callback) {
+        this.onConnected = callback;
     }
 
-    public void setOnError(Consumer<Throwable> cb) {
-        this.onError = cb;
+    /**
+     * Registers the callback to run each time a new STOMP session fails to establish or is closed due to an error.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnError(Consumer<Throwable> callback) {
+        this.onError = callback;
     }
 
-    public void setOnDisconnected(Runnable cb) {
-        this.onDisconnected = cb;
+    /**
+     * Registers the callback to run each time a STOMP session is closed, either by the Gateway or by the client.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnDisconnected(Runnable callback) {
+        this.onDisconnected = callback;
+    }
+
+    /**
+     * Registers the callback to run each time a new session is registered:
+     * it never runs before the session is ready to send messages.
+     *
+     * @param callback the callback to run
+     */
+    public void setOnReadyToSend(Runnable callback) {
+        this.onReadyToSend = callback;
     }
 
     /**
@@ -114,6 +161,7 @@ public class WebSocketService {
                 .thenApply(s -> {
                     session.set(s);
                     flushPendingAcks();
+                    onReadyToSend.run();
                     return s;
                 })
                 .exceptionally(e -> {
@@ -126,7 +174,8 @@ public class WebSocketService {
     /**
      * Sends a message via STOMP.
      *
-     * @return true if the message was submitted, false if not connected.
+     * @return {@code true} if the message was sent,
+     *         {@code false} if the session is not connected or the send failed
      */
     public boolean sendMessage(OutboundMessageDto dto) {
         StompSession s = session.get();
@@ -134,8 +183,13 @@ public class WebSocketService {
             log.warn("Cannot send: not connected");
             return false;
         }
-        s.send(props.getStompSendDestination(), dto);
-        return true;
+        try {
+            s.send(props.getStompSendDestination(), dto);
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Could not send message {}: {}", dto.messageId(), e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -146,31 +200,6 @@ public class WebSocketService {
     public void sendAck(String messageId) {
         pendingAcks.add(messageId);
         flushPendingAcks();
-    }
-
-    /**
-     * Transmits all pending ACKs over the current session, if connected. An ACK is removed from the queue
-     * right before being delivered to the transport protocol and reinserted into the queue if the transfer fails.
-     */
-    void flushPendingAcks() {
-        StompSession s = session.get();
-        if (s == null || !s.isConnected()) {
-            if (!pendingAcks.isEmpty()) {
-                log.debug("{} ACK(s) pending until the WebSocket is connected", pendingAcks.size());
-            }
-            return;
-        }
-        for (String id : List.copyOf(pendingAcks)) {
-            if (!pendingAcks.remove(id)) {
-                continue; // transmitted by a concurrent flush
-            }
-            try {
-                s.send(props.getStompSendAckDestination(), new DeliveryAckDto(id));
-            } catch (RuntimeException e) {
-                log.warn("Could not send ACK for {}, keeping it pending: {}", id, e.getMessage());
-                pendingAcks.add(id);
-            }
-        }
     }
 
     /**
@@ -193,5 +222,26 @@ public class WebSocketService {
     public boolean isConnected() {
         StompSession s = session.get();
         return s != null && s.isConnected();
+    }
+
+    private void flushPendingAcks() {
+        StompSession s = session.get();
+        if (s == null || !s.isConnected()) {
+            if (!pendingAcks.isEmpty()) {
+                log.debug("{} ACK(s) pending until the WebSocket is connected", pendingAcks.size());
+            }
+            return;
+        }
+        for (String id : List.copyOf(pendingAcks)) {
+            if (!pendingAcks.remove(id)) {
+                continue; // transmitted by a concurrent flush
+            }
+            try {
+                s.send(props.getStompSendAckDestination(), new DeliveryAckDto(id));
+            } catch (RuntimeException e) {
+                log.warn("Could not send ACK for {}, keeping it pending: {}", id, e.getMessage());
+                pendingAcks.add(id);
+            }
+        }
     }
 }

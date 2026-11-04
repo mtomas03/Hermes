@@ -1,10 +1,13 @@
 package it.unibo.hermes.e2e.support;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -13,7 +16,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class Kubectl {
 
-    private Kubectl() {}
+    private Kubectl() {
+    }
 
     /**
      * Triggers a rolling restart of a Deployment and waits for the rollout to complete.
@@ -112,8 +116,8 @@ public final class Kubectl {
     /**
      * Returns the number of ready replicas of a StatefulSet or Deployment (0 if none).
      *
-     * @param kind {@code "statefulset"} or {@code "deployment"}
-     * @param name the name of the StatefulSet or Deployment
+     * @param kind      {@code "statefulset"} or {@code "deployment"}
+     * @param name      the name of the StatefulSet or Deployment
      * @param namespace the Kubernetes namespace
      * @return the number of ready replicas
      */
@@ -123,13 +127,70 @@ public final class Kubectl {
         return out.isEmpty() ? 0 : Integer.parseInt(out);
     }
 
+    /**
+     * Returns the logs of a Pod's container.
+     *
+     * @param pod       the Pod name
+     * @param namespace the Kubernetes namespace
+     * @param timeout   bounded wait for the command
+     * @return the container log
+     */
+    public static String podLogs(String pod, String namespace, Duration timeout) {
+        return run(timeout, "kubectl", "-n", namespace, "logs", pod);
+    }
+
+    /**
+     * Returns the names of the Pods matching a label selector,
+     * including Pods that are still terminating.
+     *
+     * @param labelSelector a label selector
+     * @param namespace     the Kubernetes namespace
+     * @return the Pod names, sorted
+     */
+    public static List<String> podNames(String labelSelector, String namespace) {
+        return run(Duration.ofSeconds(15), "kubectl", "-n", namespace, "get", "pods", "-l", labelSelector,
+                "-o", "name").lines()
+                .filter(line -> line.startsWith("pod/")) // skips "No resources found"
+                .map(line -> line.substring("pod/".length()).trim())
+                .sorted().toList();
+    }
+
+    /**
+     * Waits until the given Deployment has the expected number of Pods ready
+     * and belonging to the same ReplicaSet.
+     *
+     * <p> Pod names are {@code <deployment>-<replicaset hash>-<suffix>}:
+     * dropping the suffix identifies the ReplicaSet.
+     *
+     * @param deployment    the Deployment name
+     * @param labelSelector the label selecting its Pods
+     * @param replicas      the expected number of Pods
+     * @param namespace     the Kubernetes namespace
+     * @param timeout       the maximum time to wait
+     * @return the Pod names, sorted
+     */
+    public static List<String> awaitReadyPods(String deployment, String labelSelector, int replicas,
+                                              String namespace, Duration timeout) {
+        return Poller.pollUntil(() -> {
+            List<String> pods = podNames(labelSelector, namespace);
+            boolean sameReplicaSet = !pods.isEmpty() && pods.getFirst().startsWith(deployment + "-")
+                    && pods.stream().map(p -> p.substring(0, p.lastIndexOf('-'))).distinct().count() == 1;
+            return pods.size() == replicas && sameReplicaSet
+                    && readyReplicas("deployment", deployment, namespace) == replicas
+                    ? Optional.of(pods) : Optional.empty();
+        }, timeout, replicas + " Ready " + deployment + " Pods of a single ReplicaSet");
+    }
+
     private static String run(Duration timeout, String... command) {
+        Path outFile = null;
         try {
+            outFile = Files.createTempFile("kubectl-", ".out");
             Process process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
+                    .redirectOutput(outFile.toFile())
                     .start();
             boolean finished = process.waitFor(timeout.toSeconds(), TimeUnit.SECONDS);
-            String output = readOutput(process);
+            String output = Files.readString(outFile);
             if (!finished) {
                 process.destroyForcibly();
                 throw new AssertionError("kubectl command timed out after " + timeout + ": "
@@ -140,21 +201,19 @@ public final class Kubectl {
                         + String.join(" ", command) + "\nOutput:\n" + output);
             }
             return output;
-        } catch (Exception e) {
-            throw new AssertionError("Could not run kubectl command: "
-                    + String.join(" ", command), e);
-        }
-    }
-
-    private static String readOutput(Process process) throws Exception {
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append('\n');
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AssertionError("Could not run kubectl command: " + String.join(" ", command), e);
+        } finally {
+            if (outFile != null) {
+                try {
+                    Files.deleteIfExists(outFile);
+                } catch (IOException ignored) {
+                    // temp file clean-up is best effort
+                }
             }
         }
-        return sb.toString();
     }
 }

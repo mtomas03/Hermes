@@ -25,7 +25,6 @@ class PostgresOutageStatelessJwtE2ETest {
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
     private static final Duration SCALE_TIMEOUT = Duration.ofSeconds(300);
     private static final String NAMESPACE = E2EConfig.get().namespace();
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
@@ -48,9 +47,7 @@ class PostgresOutageStatelessJwtE2ETest {
 
         String messageBefore = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("beforePgOutage"));
         Poller.pollUntil(() -> bob.findLocalMessage(conv, messageBefore), TIMEOUT, "baseline message delivery");
-        Poller.pollUntil(() -> alice.findRemoteMessage(conv, messageBefore, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                TIMEOUT, "baseline message ACKNOWLEDGED");
+        alice.awaitAcknowledged(conv, messageBefore, TIMEOUT);
 
         String outageUser = TestIds.testId("pgOutage");
         String password = TestIds.testPassword();
@@ -87,9 +84,7 @@ class PostgresOutageStatelessJwtE2ETest {
             String during = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("duringPgOutage"));
             Poller.pollUntil(() -> bob.findLocalMessage(conv, during), TIMEOUT,
                     "message sent over a new WebSocket during the outage to reach the recipient");
-            Poller.pollUntil(() -> alice.findRemoteMessage(conv, during, TIMEOUT)
-                            .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                    TIMEOUT, "message sent during the outage to be persisted and ACKNOWLEDGED");
+            alice.awaitAcknowledged(conv, during, TIMEOUT);
 
             // invalid tokens are still rejected
             String expired = ForgedJwt.hs256(alice.getUsername(), Instant.now().minusSeconds(120), signingKey);

@@ -8,7 +8,8 @@ import java.util.UUID;
  */
 public final class TestIds {
 
-    private TestIds() {}
+    private TestIds() {
+    }
 
     /**
      * Generates a short, unique suffix for this run/user.

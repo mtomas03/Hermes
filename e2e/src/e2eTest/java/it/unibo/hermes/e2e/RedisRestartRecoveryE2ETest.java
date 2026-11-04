@@ -1,6 +1,5 @@
 package it.unibo.hermes.e2e;
 
-import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -11,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import static it.unibo.hermes.e2e.support.TestClient.ids;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,7 +28,6 @@ class RedisRestartRecoveryE2ETest {
     private static final Duration ROLLOUT_TIMEOUT = Duration.ofSeconds(180);
     private static final Duration RECOVERY_TIMEOUT = Duration.ofSeconds(150);
     private static final Duration PROBE_INTERVAL = Duration.ofSeconds(5);
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
@@ -56,7 +55,7 @@ class RedisRestartRecoveryE2ETest {
         String before = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("beforeRedisRestart"));
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, before), TIMEOUT,
                 "message " + before + " to reach " + bob.getUsername() + " before the Redis restart");
-        awaitAcknowledged(conversationId, before);
+        alice.awaitAcknowledged(conversationId, before, RECOVERY_TIMEOUT);
 
         Kubectl.restartAndAwaitRollout("redis-deployment", E2EConfig.get().namespace(), ROLLOUT_TIMEOUT);
 
@@ -65,17 +64,17 @@ class RedisRestartRecoveryE2ETest {
         // probe that reaches Bob in real time proves recovery.
         List<String> probes = new ArrayList<>();
         String delivered = Poller.pollUntil(() -> {
-            Optional<String> pushed = probes.stream()
-                    .filter(id -> bob.findLocalMessage(conversationId, id).isPresent())
-                    .findFirst();
-            if (pushed.isEmpty()) {
-                probes.add(alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("probe" + probes.size())));
-            }
-            return pushed;
-        }, RECOVERY_TIMEOUT, PROBE_INTERVAL,
+                    Optional<String> pushed = probes.stream()
+                            .filter(id -> bob.findLocalMessage(conversationId, id).isPresent())
+                            .findFirst();
+                    if (pushed.isEmpty()) {
+                        probes.add(alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("probe" + probes.size())));
+                    }
+                    return pushed;
+                }, RECOVERY_TIMEOUT, PROBE_INTERVAL,
                 "real-time delivery to " + bob.getUsername() + " to resume after the Redis restart (presence restored)");
         assertTrue(bob.isConnected() && alice.isConnected(), "recovery must not have needed a disconnection");
-        awaitAcknowledged(conversationId, delivered);
+        alice.awaitAcknowledged(conversationId, delivered, RECOVERY_TIMEOUT);
 
         List<String> expected = new ArrayList<>();
         expected.add(before);
@@ -91,14 +90,4 @@ class RedisRestartRecoveryE2ETest {
         assertEquals(expected.size(), bob.localMessages(conversationId).size(), "no local duplicates");
     }
 
-    private void awaitAcknowledged(String conversationId, String messageId) {
-        Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                RECOVERY_TIMEOUT, "server-side state of message " + messageId + " to become ACKNOWLEDGED");
-    }
-
-    private static List<String> ids(List<InboundMessageDto> messages) {
-        return messages.stream().map(InboundMessageDto::messageId).toList();
-    }
 }

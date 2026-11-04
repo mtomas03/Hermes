@@ -2,6 +2,7 @@ package it.unibo.hermes.e2e;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -23,10 +24,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class IdempotencyE2ETest {
 
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
+
+    private static long count(List<InboundMessageDto> messages, String messageId) {
+        return messages.stream().filter(m -> m.messageId().equals(messageId)).count();
+    }
+
+    private static String statusOf(List<InboundMessageDto> messages, String messageId) {
+        return messages.stream().filter(m -> m.messageId().equals(messageId))
+                .map(InboundMessageDto::messageStatus).findFirst().orElse(null);
+    }
 
     @AfterEach
     void tearDown() {
@@ -44,19 +53,19 @@ class IdempotencyE2ETest {
         String conversationId = TestIds.conversationId(alice.getUsername(), bob.getUsername());
 
         String first = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("dupack1"));
-        awaitAcknowledged(conversationId, first);
+        alice.awaitAcknowledged(conversationId, first, TIMEOUT);
 
         bob.sendAck(first);
         bob.sendAck(first);
         bob.sendAck(first);
 
         String second = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("dupack2"));
-        awaitAcknowledged(conversationId, second);
+        alice.awaitAcknowledged(conversationId, second, TIMEOUT);
 
         List<InboundMessageDto> synced = alice.syncConversation(conversationId, TIMEOUT).messages();
         assertEquals(1, count(synced, first),
                 "the duplicated ACK must not duplicate the message server-side");
-        assertEquals(ACKNOWLEDGED, statusOf(synced, first),
+        assertEquals(MessageStatus.ACKNOWLEDGED.name(), statusOf(synced, first),
                 "the server-side state must stay ACKNOWLEDGED after duplicate ACKs");
         assertEquals(1, bob.localMessages(conversationId).stream()
                 .filter(m -> m.getMessageId().equals(first)).count());
@@ -68,18 +77,18 @@ class IdempotencyE2ETest {
         String conversationId = TestIds.conversationId(alice.getUsername(), bob.getUsername());
 
         String original = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("resubmit"));
-        awaitAcknowledged(conversationId, original);
+        alice.awaitAcknowledged(conversationId, original, TIMEOUT);
 
         alice.resubmitMessage(conversationId, original);
         alice.resubmitMessage(conversationId, original);
 
         String barrier = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("resubmitBarrier"));
-        awaitAcknowledged(conversationId, barrier);
+        alice.awaitAcknowledged(conversationId, barrier, TIMEOUT);
 
         List<InboundMessageDto> synced = alice.syncConversation(conversationId, TIMEOUT).messages();
         assertEquals(1, count(synced, original),
                 "a re-submitted message_id must exist exactly once server-side");
-        assertEquals(ACKNOWLEDGED, statusOf(synced, original),
+        assertEquals(MessageStatus.ACKNOWLEDGED.name(), statusOf(synced, original),
                 "reprocessing a re-submission must not reset an acknowledged message");
         List<Message> local = bob.localMessages(conversationId);
         assertEquals(1, local.stream().filter(m -> m.getMessageId().equals(original)).count(),
@@ -96,22 +105,5 @@ class IdempotencyE2ETest {
         bob.registerAndLogin(TIMEOUT);
         alice.connectAndAwait(TIMEOUT);
         bob.connectAndAwait(TIMEOUT);
-    }
-
-    private void awaitAcknowledged(String conversationId, String messageId) {
-        Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                TIMEOUT,
-                "server-side state of message " + messageId + " to become ACKNOWLEDGED");
-    }
-
-    private static long count(List<InboundMessageDto> messages, String messageId) {
-        return messages.stream().filter(m -> m.messageId().equals(messageId)).count();
-    }
-
-    private static String statusOf(List<InboundMessageDto> messages, String messageId) {
-        return messages.stream().filter(m -> m.messageId().equals(messageId))
-                .map(InboundMessageDto::messageStatus).findFirst().orElse(null);
     }
 }

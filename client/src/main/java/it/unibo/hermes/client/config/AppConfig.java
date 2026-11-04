@@ -46,12 +46,16 @@ public class AppConfig {
      * STOMP-over-WebSocket client.
      */
     @Bean
-    public WebSocketStompClient stompClient(ObjectMapper objectMapper) {
+    public WebSocketStompClient stompClient(AppProperties props, ObjectMapper objectMapper) {
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
         MappingJackson2MessageConverter converter = new MappingJackson2MessageConverter();
         converter.setObjectMapper(objectMapper);
         client.setMessageConverter(converter);
         client.setTaskScheduler(new ConcurrentTaskScheduler(heartbeatScheduler()));
+        client.setDefaultHeartbeat(new long[]{
+                props.getHeartbeatIntervalMs(),
+                props.getHeartbeatIntervalMs()
+        });
         return client;
     }
 

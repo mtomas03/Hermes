@@ -41,7 +41,7 @@ public class LocalPersistenceService {
      *                       as safely received
      */
     public boolean saveMessage(Message msg) {
-        return messageRepository.insertIfAbsent(msg);
+        return messageRepository.upsertMessage(msg);
     }
 
     /**
@@ -52,6 +52,17 @@ public class LocalPersistenceService {
      */
     public List<Message> loadMessages(String conversationId) {
         return messageRepository.findByConversation(conversationId);
+    }
+
+    /**
+     * Loads the outbox of a user: messages composed locally and
+     * not yet confirmed by the server.
+     *
+     * @param senderUsername the local user
+     * @return the unconfirmed messages, oldest first
+     */
+    public List<Message> loadPendingOutbound(String senderUsername) {
+        return messageRepository.findPendingBySender(senderUsername);
     }
 
     /**
