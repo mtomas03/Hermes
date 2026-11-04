@@ -1,6 +1,5 @@
 package it.unibo.hermes.e2e;
 
-import it.unibo.hermes.client.dto.InboundMessageDto;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -8,8 +7,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
+import static it.unibo.hermes.e2e.support.TestClient.ids;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -25,10 +24,20 @@ class CassandraNodeFailureE2ETest {
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
     private static final Duration SCALE_TIMEOUT = Duration.ofSeconds(600);
     private static final String NAMESPACE = E2EConfig.get().namespace();
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
+
+    private static int upNormalNodes() {
+        try {
+            String out = Kubectl.customKubectlCommand(
+                    Duration.ofSeconds(60), "-n", NAMESPACE, "exec", "cassandra-statefulset-0",
+                    "--", "nodetool", "status");
+            return (int) out.lines().filter(l -> l.startsWith("UN")).count();
+        } catch (AssertionError e) {
+            return -1; // node 0 not reachable yet: keep polling
+        }
+    }
 
     @AfterEach
     void tearDown() {
@@ -88,31 +97,6 @@ class CassandraNodeFailureE2ETest {
     private void awaitDeliveredAndAcknowledged(String conv, String messageId) {
         Poller.pollUntil(() -> bob.findLocalMessage(conv, messageId), TIMEOUT,
                 "message " + messageId + " to reach the recipient");
-        AtomicReference<String> lastSeen =
-                new AtomicReference<>("no sync response yet");
-        try {
-            Poller.pollUntil(() -> {
-                var remote = alice.findRemoteMessage(conv, messageId, TIMEOUT);
-                lastSeen.set(remote.map(InboundMessageDto::messageStatus).orElse("message absent from sync"));
-                return remote.filter(m -> ACKNOWLEDGED.equals(m.messageStatus()));
-            }, TIMEOUT, "message " + messageId + " to be persisted and ACKNOWLEDGED");
-        } catch (AssertionError e) {
-            throw new AssertionError(e.getMessage() + " | last status seen in sync: " + lastSeen.get(), e);
-        }
-    }
-
-    private static int upNormalNodes() {
-        try {
-            String out = Kubectl.customKubectlCommand(
-                    Duration.ofSeconds(60), "-n", NAMESPACE, "exec", "cassandra-statefulset-0",
-                    "--", "nodetool", "status");
-            return (int) out.lines().filter(l -> l.startsWith("UN")).count();
-        } catch (AssertionError e) {
-            return -1; // node 0 not reachable yet: keep polling
-        }
-    }
-
-    private static List<String> ids(List<InboundMessageDto> messages) {
-        return messages.stream().map(InboundMessageDto::messageId).toList();
+        alice.awaitAcknowledged(conv, messageId, TIMEOUT);
     }
 }

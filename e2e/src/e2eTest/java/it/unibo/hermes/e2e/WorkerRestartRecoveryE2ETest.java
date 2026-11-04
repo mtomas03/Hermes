@@ -1,6 +1,7 @@
 package it.unibo.hermes.e2e;
 
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,6 @@ class WorkerRestartRecoveryE2ETest {
 
     private static final Duration TIMEOUT = E2EConfig.get().defaultTimeout();
     private static final Duration ROLLOUT_TIMEOUT = Duration.ofSeconds(90);
-    private static final String ACKNOWLEDGED = "ACKNOWLEDGED";
 
     private TestClient alice;
     private TestClient bob;
@@ -58,13 +58,9 @@ class WorkerRestartRecoveryE2ETest {
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, messageId), TIMEOUT,
                 "message " + messageId + " to still reach " + bob.getUsername() + " after a Worker restart");
 
-        InboundMessageDto finalState = Poller.pollUntil(
-                () -> alice.findRemoteMessage(conversationId, messageId, TIMEOUT)
-                        .filter(m -> ACKNOWLEDGED.equals(m.messageStatus())),
-                TIMEOUT,
-                "message " + messageId + " to reach " + ACKNOWLEDGED + " server-side after a Worker restart");
+        InboundMessageDto finalState = alice.awaitAcknowledged(conversationId, messageId, TIMEOUT);
 
-        assertEquals(ACKNOWLEDGED, finalState.messageStatus());
+        assertEquals(MessageStatus.ACKNOWLEDGED.name(), finalState.messageStatus());
         assertEquals(body, finalState.content(), "message content must survive the restart intact");
     }
 }
