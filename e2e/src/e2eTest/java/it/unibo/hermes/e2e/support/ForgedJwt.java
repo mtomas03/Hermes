@@ -11,7 +11,8 @@ import java.util.Base64;
  */
 public final class ForgedJwt {
 
-    private ForgedJwt() {}
+    private ForgedJwt() {
+    }
 
     /**
      * Builds a HS256 JWT with the given subject and expiration time,

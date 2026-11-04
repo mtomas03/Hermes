@@ -2,18 +2,17 @@ package it.unibo.hermes.e2e.support;
 
 import it.unibo.hermes.client.config.AppConfig;
 import it.unibo.hermes.client.controller.ConnectionController;
-import it.unibo.hermes.client.dto.OutboundMessageDto;
 import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.dto.OutboundMessageDto;
 import it.unibo.hermes.client.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.client.model.domain.User;
-import it.unibo.hermes.client.service.AuthService;
-import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.SyncService;
-import it.unibo.hermes.client.service.WebSocketService;
+import it.unibo.hermes.client.model.state.ClientStateModel;
+import it.unibo.hermes.client.model.state.ConnectionState;
+import it.unibo.hermes.client.service.*;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 
@@ -27,6 +26,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Hermes client without the GUI.
@@ -41,6 +42,7 @@ public final class TestClient implements AutoCloseable {
     private final ConnectionController connectionController;
     private final WebSocketService webSocketService;
     private final Path dbFile;
+    private final AtomicInteger disconnections = new AtomicInteger();
 
     private final String username;
     private final String password;
@@ -55,11 +57,12 @@ public final class TestClient implements AutoCloseable {
         this.password = password;
         this.dbFile = allocateTempDbFile(username);
 
-        E2EConfig cfg = E2EConfig.get();
+        E2EConfig config = E2EConfig.get();
         Map<String, Object> overrides = new HashMap<>();
-        overrides.put("hermes.server.base-url", cfg.baseUrl());
-        overrides.put("hermes.server.ws-url", cfg.wsUrl());
+        overrides.put("hermes.server.base-url", config.baseUrl());
+        overrides.put("hermes.server.ws-url", config.wsUrl());
         overrides.put("hermes.client.db-path", dbFile.toAbsolutePath().toString());
+        overrides.put("hermes.client.heartbeat-interval-ms", "2000");
 
         this.context = new AnnotationConfigApplicationContext();
         context.getEnvironment().getPropertySources()
@@ -73,6 +76,23 @@ public final class TestClient implements AutoCloseable {
         this.syncService = context.getBean(SyncService.class);
         this.connectionController = context.getBean(ConnectionController.class);
         this.webSocketService = context.getBean(WebSocketService.class);
+        context.getBean(ClientStateModel.class).addConnectionStateListener(event -> {
+            if (event.getNewValue() == ConnectionState.DISCONNECTED) {
+                disconnections.incrementAndGet();
+            }
+        });
+    }
+
+    /**
+     * Extracts the {@code message_id} of each message in a sync response.
+     *
+     * @param messages the messages returned by a sync
+     * @return the message ids in the same order
+     */
+    public static List<String> ids(List<InboundMessageDto> messages) {
+        return messages.stream()
+                .map(InboundMessageDto::messageId)
+                .toList();
     }
 
     /**
@@ -95,6 +115,8 @@ public final class TestClient implements AutoCloseable {
             throw new IllegalStateException("Login returned no token for user " + username);
         }
         this.token = response.token();
+        context.getBean(ClientStateModel.class)
+                .setCurrentUser(new User(username));
     }
 
     /**
@@ -144,6 +166,26 @@ public final class TestClient implements AutoCloseable {
      */
     public boolean isConnected() {
         return webSocketService.isConnected();
+    }
+
+    /**
+     * Counts how many times this client's connection state became {@code DISCONNECTED}.
+     *
+     * @return the number of disconnections
+     */
+    public int disconnectionCount() {
+        return disconnections.get();
+    }
+
+    /**
+     * Counts the messages of a conversation with the given id in this client's local state.
+     *
+     * @param conversationId the conversation
+     * @param messageId      the message id
+     * @return how many local rows carry that id (a correct history has at most one)
+     */
+    public long countLocalCopies(String conversationId, String messageId) {
+        return localMessages(conversationId).stream().filter(m -> m.getMessageId().equals(messageId)).count();
     }
 
     /**
@@ -297,6 +339,32 @@ public final class TestClient implements AutoCloseable {
     }
 
     /**
+     * Waits until the server reports the message
+     * as {@link MessageStatus#ACKNOWLEDGED} by the recipient.
+     *
+     * @param conversationId the conversation
+     * @param messageId      the message id
+     * @param timeout        the maximum time to wait
+     * @return the server-side view of the acknowledged message
+     * @throws AssertionError if the message does not become ACKNOWLEDGED in time
+     */
+    public InboundMessageDto awaitAcknowledged(String conversationId, String messageId, Duration timeout) {
+        AtomicReference<String> lastSeen = new AtomicReference<>("no sync response yet");
+        Duration requestTimeout = timeout.compareTo(E2EConfig.get().defaultTimeout()) < 0
+                ? timeout : E2EConfig.get().defaultTimeout();
+        try {
+            return Poller.pollUntil(() -> {
+                Optional<InboundMessageDto> remote = findRemoteMessage(conversationId, messageId, requestTimeout);
+                lastSeen.set(remote.map(InboundMessageDto::messageStatus).orElse("message absent from sync"));
+                return remote.filter(m ->
+                        MessageStatus.ACKNOWLEDGED.name().equals(m.messageStatus()));
+            }, timeout, "server-side state of message " + messageId + " to become " + MessageStatus.ACKNOWLEDGED);
+        } catch (AssertionError e) {
+            throw new AssertionError(e.getMessage() + " | last status seen in sync: " + lastSeen.get(), e);
+        }
+    }
+
+    /**
      * Attempts a protected REST call with an arbitrary {@code Authorization} header value,
      * bypassing this client's own stored token.
      *
@@ -338,18 +406,21 @@ public final class TestClient implements AutoCloseable {
             if (isConnected()) {
                 disconnect();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
             context.close();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
             Files.deleteIfExists(dbFile);
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
-    private static Path allocateTempDbFile(String username) {
+    private Path allocateTempDbFile(String username) {
         try {
             Path file = Files.createTempFile("hermes-e2e-" + username + "-", ".db");
             Files.deleteIfExists(file);
