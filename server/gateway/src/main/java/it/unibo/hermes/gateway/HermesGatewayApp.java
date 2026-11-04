@@ -11,9 +11,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * Entry-point for the Hermes Gateway.
  */
 @EnableScheduling
-@SpringBootApplication(exclude = { RedisRepositoriesAutoConfiguration.class })
-@EnableJpaRepositories(basePackages = "it.unibo.hermes.gateway.repository.jpa")
-@EnableCassandraRepositories(basePackages = "it.unibo.hermes.gateway.repository.cassandra")
+@SpringBootApplication(exclude = {RedisRepositoriesAutoConfiguration.class})
+@EnableJpaRepositories(
+        basePackages = "it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.jpa"
+)
+@EnableCassandraRepositories(
+        basePackages = "it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.cassandra"
+)
 public class HermesGatewayApp {
     public static void main(String[] args) {
         SpringApplication.run(HermesGatewayApp.class, args);

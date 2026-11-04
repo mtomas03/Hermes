@@ -13,8 +13,8 @@ public record User(String username) {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof User u)) return false;
-        return username.equals(u.username);
+        if (!(o instanceof User(String username1))) return false;
+        return username.equals(username1);
     }
 
     @Override

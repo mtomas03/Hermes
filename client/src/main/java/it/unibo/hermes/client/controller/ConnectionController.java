@@ -1,18 +1,18 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.config.AppProperties;
-import it.unibo.hermes.client.dto.AckDto;
-import it.unibo.hermes.client.dto.ErrorDto;
-import it.unibo.hermes.client.dto.InboundMessageDto;
-import it.unibo.hermes.client.dto.SystemMessageDto;
-import it.unibo.hermes.client.exception.MessagePersistenceException;
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AckDto;
+import it.unibo.hermes.client.model.dto.ErrorDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.dto.SystemMessageDto;
+import it.unibo.hermes.client.model.service.MessageService;
+import it.unibo.hermes.client.model.service.WebSocketService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.model.state.ConnectionState;
-import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.WebSocketService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -51,7 +51,8 @@ public class ConnectionController {
     private final AtomicInteger retryCount = new AtomicInteger(0);
     private ScheduledFuture<?> pending = null;
     private volatile String currentToken;
-    private volatile Runnable onConnectedCallback = () -> {};
+    private volatile Runnable onConnectedCallback = () -> {
+    };
 
     public ConnectionController(WebSocketService wsService,
                                 ClientStateModel stateModel,

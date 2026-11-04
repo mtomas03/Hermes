@@ -29,19 +29,19 @@ spec:
               value: /var/lib/postgresql/data/pgdata
           startupProbe:
             exec:
-              command: ["/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+              command: [ "/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" ]
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 120
           readinessProbe:
             exec:
-              command: ["/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+              command: [ "/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" ]
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3
           livenessProbe:
             exec:
-              command: ["/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+              command: [ "/bin/sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" ]
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 6
@@ -52,7 +52,7 @@ spec:
     - metadata:
         name: postgres-data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: [ "ReadWriteOnce" ]
         resources:
           requests:
             storage: 1Gi

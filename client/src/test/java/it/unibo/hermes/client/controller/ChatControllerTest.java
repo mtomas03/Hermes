@@ -1,12 +1,11 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.UserDto;
 import it.unibo.hermes.client.model.domain.*;
+import it.unibo.hermes.client.model.dto.UserDto;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.MessageService;
+import it.unibo.hermes.client.model.service.UserService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.AuthService;
-import it.unibo.hermes.client.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,9 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)

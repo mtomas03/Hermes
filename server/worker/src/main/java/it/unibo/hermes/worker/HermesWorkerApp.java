@@ -8,8 +8,10 @@ import org.springframework.data.cassandra.repository.config.EnableCassandraRepos
 /**
  * Entry-point for the Hermes Delivery Worker.
  */
-@SpringBootApplication(exclude = { RedisRepositoriesAutoConfiguration.class })
-@EnableCassandraRepositories(basePackages = "it.unibo.hermes.worker.repository.cassandra")
+@SpringBootApplication(exclude = {RedisRepositoriesAutoConfiguration.class})
+@EnableCassandraRepositories(
+        basePackages = "it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.repository"
+)
 public class HermesWorkerApp {
     public static void main(String[] args) {
         SpringApplication.run(HermesWorkerApp.class, args);

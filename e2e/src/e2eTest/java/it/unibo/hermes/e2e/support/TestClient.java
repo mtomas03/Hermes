@@ -1,18 +1,18 @@
 package it.unibo.hermes.e2e.support;
 
-import it.unibo.hermes.client.config.AppConfig;
 import it.unibo.hermes.client.controller.ConnectionController;
-import it.unibo.hermes.client.dto.AuthResponseDto;
-import it.unibo.hermes.client.dto.InboundMessageDto;
-import it.unibo.hermes.client.dto.OutboundMessageDto;
-import it.unibo.hermes.client.dto.SyncResponseDto;
+import it.unibo.hermes.client.infrastructure.config.AppConfig;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AuthResponseDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.dto.OutboundMessageDto;
+import it.unibo.hermes.client.model.dto.SyncResponseDto;
+import it.unibo.hermes.client.model.service.*;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.model.state.ConnectionState;
-import it.unibo.hermes.client.service.*;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 

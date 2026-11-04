@@ -1,6 +1,6 @@
 package it.unibo.hermes.e2e;
 
-import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

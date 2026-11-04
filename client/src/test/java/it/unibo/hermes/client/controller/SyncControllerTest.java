@@ -1,11 +1,11 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.ConversationDto;
-import it.unibo.hermes.client.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.domain.*;
+import it.unibo.hermes.client.model.dto.ConversationDto;
+import it.unibo.hermes.client.model.dto.SyncResponseDto;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.SyncService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.SyncService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

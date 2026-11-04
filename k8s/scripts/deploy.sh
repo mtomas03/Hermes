@@ -22,6 +22,7 @@ fi
 
 echo "[2/8] Enabling NGINX Ingress"
 minikube addons enable ingress
+kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=120s
 
 echo "[3/8] Building Gateway and Worker images"
 "$SCRIPT_DIR/build-images.sh"

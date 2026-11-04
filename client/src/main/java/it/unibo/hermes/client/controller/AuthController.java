@@ -1,12 +1,12 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AuthResponseDto;
+import it.unibo.hermes.client.model.service.AuthService;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.AuthService;
-import it.unibo.hermes.client.service.LocalPersistenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -69,10 +69,10 @@ public class AuthController {
     /**
      * Attempts to register a new account with the provided credentials.
      *
-     * @param username the desired username
-     * @param password the desired password
+     * @param username  the desired username
+     * @param password  the desired password
      * @param onSuccess callback invoked if registration succeeds
-     * @param onError callback invoked with a user-friendly error message if registration fails
+     * @param onError   callback invoked with a user-friendly error message if registration fails
      */
     public void register(String username, String password,
                          Runnable onSuccess, Consumer<String> onError) {

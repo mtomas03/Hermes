@@ -53,7 +53,7 @@ spec:
           lifecycle:
             preStop:
               exec:
-                command: ["/bin/sh", "-c", "nodetool drain"]
+                command: [ "/bin/sh", "-c", "nodetool drain" ]
           resources:
             requests:
               cpu: 250m
@@ -87,7 +87,7 @@ spec:
     - metadata:
         name: cassandra-data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: [ "ReadWriteOnce" ]
         resources:
           requests:
             storage: 2Gi

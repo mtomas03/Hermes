@@ -1,12 +1,12 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AuthResponseDto;
+import it.unibo.hermes.client.model.service.AuthService;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.AuthService;
-import it.unibo.hermes.client.service.LocalPersistenceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

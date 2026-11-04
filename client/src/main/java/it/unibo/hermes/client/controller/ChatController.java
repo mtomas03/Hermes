@@ -1,14 +1,14 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.UserDto;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.UserDto;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.MessageService;
+import it.unibo.hermes.client.model.service.UserService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.MessageService;
-import it.unibo.hermes.client.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

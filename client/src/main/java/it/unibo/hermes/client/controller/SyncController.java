@@ -1,10 +1,13 @@
 package it.unibo.hermes.client.controller;
 
-import it.unibo.hermes.client.dto.ConversationDto;
-import it.unibo.hermes.client.model.domain.*;
+import it.unibo.hermes.client.model.domain.AuthToken;
+import it.unibo.hermes.client.model.domain.Conversation;
+import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.ConversationDto;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.SyncService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
-import it.unibo.hermes.client.service.LocalPersistenceService;
-import it.unibo.hermes.client.service.SyncService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -71,7 +74,7 @@ public class SyncController {
      * in the current session. If the conversation is already synced, this method
      * will not perform any action.
      *
-     * @param conversationId    the unique identifier of the conversation to synchronise
+     * @param conversationId the unique identifier of the conversation to synchronise
      */
     public void syncConversationIfNeeded(String conversationId) {
         AuthToken token = stateModel.getAuthToken();
@@ -100,7 +103,7 @@ public class SyncController {
      * Refreshes the active messages for a given conversation by reloading them from
      * the local persistence layer and updating the client state model.
      *
-     * @param conversationId    the unique identifier of the conversation whose messages are to be refreshed
+     * @param conversationId the unique identifier of the conversation whose messages are to be refreshed
      */
     public void refreshActiveMessages(String conversationId) {
         List<Message> messages = persistence.loadMessages(conversationId);
@@ -178,5 +181,6 @@ public class SyncController {
         );
     }
 
-    private record SyncResult(String conversationId, int messageCount) {}
+    private record SyncResult(String conversationId, int messageCount) {
+    }
 }

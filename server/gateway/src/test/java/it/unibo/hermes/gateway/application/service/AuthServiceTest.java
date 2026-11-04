@@ -1,0 +1,98 @@
+package it.unibo.hermes.gateway.application.service;
+
+import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AuthResponseDto;
+import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.LoginRequestDto;
+import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.RegisterRequestDto;
+import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.jpa.User;
+import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.jpa.UserRepository;
+import it.unibo.hermes.gateway.infrastructure.security.JwtProvider;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class AuthServiceTest {
+
+    @Mock
+    private UserRepository userRepository;
+    @Mock
+    private PasswordEncoder passwordEncoder;
+    @Mock
+    private JwtProvider jwtProvider;
+
+    private AuthService authServiceImpl;
+
+    @BeforeEach
+    void setUp() {
+        authServiceImpl = new AuthService(userRepository, passwordEncoder, jwtProvider);
+    }
+
+    @Test
+    void shouldRegisterNewUserWithHashedPassword() {
+        when(userRepository.existsByUsername("alice")).thenReturn(false);
+        when(passwordEncoder.encode("secret123")).thenReturn("hashed-secret");
+
+        authServiceImpl.register(new RegisterRequestDto("alice", "secret123"));
+
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(captor.capture());
+        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
+        assertThat(captor.getValue().getPasswordHash()).isEqualTo("hashed-secret");
+    }
+
+    @Test
+    void shouldRejectRegistrationOfDuplicateUsername() {
+        when(userRepository.existsByUsername("alice")).thenReturn(true);
+
+        assertThatThrownBy(() -> authServiceImpl.register(
+                new RegisterRequestDto("alice", "secret123")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void shouldLoginWithValidCredentials() {
+        User stored = new User("alice", "hashed-secret");
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(stored));
+        when(passwordEncoder.matches("secret123", "hashed-secret")).thenReturn(true);
+        when(jwtProvider.generateToken("alice")).thenReturn("jwt-token");
+        when(jwtProvider.getExpirationMs()).thenReturn(10_000L);
+
+        AuthResponseDto response = authServiceImpl.login(new LoginRequestDto("alice", "secret123"));
+
+        assertThat(response.token()).isEqualTo("jwt-token");
+        assertThat(response.username()).isEqualTo("alice");
+        assertThat(response.expiresInMs()).isEqualTo(10_000L);
+    }
+
+    @Test
+    void shouldRejectLoginForUnknownUser() {
+        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authServiceImpl.login(new LoginRequestDto("ghost", "whatever")))
+                .isInstanceOf(BadCredentialsException.class);
+        verify(jwtProvider, never()).generateToken(any());
+    }
+
+    @Test
+    void shouldRejectLoginWithWrongPassword() {
+        User stored = new User("alice", "hashed-secret");
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(stored));
+        when(passwordEncoder.matches("wrong-password", "hashed-secret")).thenReturn(false);
+
+        assertThatThrownBy(() -> authServiceImpl.login(new LoginRequestDto("alice", "wrong-password")))
+                .isInstanceOf(BadCredentialsException.class);
+        verify(jwtProvider, never()).generateToken(any());
+    }
+}

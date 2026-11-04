@@ -16,7 +16,7 @@ spec:
         - name: schema-init
           image: cassandra:4.1
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
+          command: [ "/bin/sh", "-c" ]
           args:
             - >-
               until cqlsh hermes-cassandra 9042 -e

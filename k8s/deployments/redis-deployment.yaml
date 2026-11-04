@@ -20,7 +20,7 @@ spec:
           ports:
             - containerPort: 6379
               name: redis
-          args: ["redis-server", "--appendonly", "no", "--save", ""]
+          args: [ "redis-server", "--appendonly", "no", "--save", "" ]
           readinessProbe:
             tcpSocket:
               port: 6379

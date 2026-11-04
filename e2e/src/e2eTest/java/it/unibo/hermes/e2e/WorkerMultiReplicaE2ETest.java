@@ -1,7 +1,8 @@
 package it.unibo.hermes.e2e;
 
-import it.unibo.hermes.client.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.e2e.support.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -250,7 +251,7 @@ class WorkerMultiReplicaE2ETest {
             }
             for (TestClient owner : List.of(first.sender(), first.recipient())) {
                 assertEquals(expectedIds, owner.localMessages(conversationId).stream()
-                                .map(it.unibo.hermes.client.model.domain.Message::getMessageId).sorted().toList(),
+                                .map(Message::getMessageId).sorted().toList(),
                         owner.getUsername() + " must have each message of " + conversationId + " exactly once");
             }
         }
