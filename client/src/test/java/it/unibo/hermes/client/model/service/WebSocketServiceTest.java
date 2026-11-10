@@ -6,6 +6,7 @@ import it.unibo.hermes.client.model.dto.OutboundMessageDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.simp.stomp.StompHeaders;
@@ -122,6 +123,61 @@ class WebSocketServiceTest {
         assertFalse(service.sendMessage(createOutboundMessage()));
     }
 
+    @Test
+    void connectShouldClosePreviousActiveSession() {
+        StompSession oldSession = mock(StompSession.class);
+        when(oldSession.isConnected()).thenReturn(true);
+        when(stompClient.connectAsync(
+                anyString(),
+                any(WebSocketHttpHeaders.class),
+                any(StompHeaders.class),
+                any(StompSessionHandler.class)
+        )).thenReturn(CompletableFuture.completedFuture(oldSession));
+
+        service.connect("token1");
+
+        assertTrue(service.isConnected());
+
+        StompSession newSession = mock(StompSession.class);
+        when(stompClient.connectAsync(
+                anyString(),
+                any(WebSocketHttpHeaders.class),
+                any(StompHeaders.class),
+                any(StompSessionHandler.class)
+        )).thenReturn(CompletableFuture.completedFuture(newSession));
+
+        service.connect("token2");
+
+        verify(oldSession).disconnect();
+    }
+
+    @Test
+    void disconnectHandlerOfStaleSessionShouldNotWipeNewSession() {
+        StompSession oldSession = mock(StompSession.class);
+        StompSession newSession = mock(StompSession.class);
+        when(newSession.isConnected()).thenReturn(true);
+        ArgumentCaptor<StompSessionHandler> handlerCaptor = ArgumentCaptor.forClass(StompSessionHandler.class);
+        when(stompClient.connectAsync(
+                    anyString(),
+                    any(WebSocketHttpHeaders.class),
+                    any(StompHeaders.class),
+                    handlerCaptor.capture()
+                ))
+                .thenReturn(CompletableFuture.completedFuture(oldSession))
+                .thenReturn(CompletableFuture.completedFuture(newSession));
+
+        service.connect("token1");
+        StompSessionHandler oldHandler = handlerCaptor.getValue();
+        service.connect("token2"); // generation moves forward
+        Runnable onDisconnectedAction = mock(Runnable.class);
+        service.setOnDisconnected(onDisconnectedAction);
+        // Old session handler triggers transport failure
+        ReflectionTestUtils.invokeMethod(oldHandler, "handleTransportError", oldSession, new RuntimeException("connection reset"));
+
+        assertTrue(service.isConnected());
+        verify(onDisconnectedAction, never()).run();
+    }
+
     private OutboundMessageDto createOutboundMessage() {
         return new OutboundMessageDto(
                 "m1", "alice-bob",
@@ -130,8 +186,12 @@ class WebSocketServiceTest {
     }
 
     private void connectWith(StompSession session) {
-        when(stompClient.connectAsync(anyString(), any(WebSocketHttpHeaders.class), any(StompHeaders.class),
-                any(StompSessionHandler.class))).thenReturn(CompletableFuture.completedFuture(session));
+        when(stompClient.connectAsync(
+                    anyString(),
+                    any(WebSocketHttpHeaders.class),
+                    any(StompHeaders.class),
+                    any(StompSessionHandler.class)))
+                .thenReturn(CompletableFuture.completedFuture(session));
         service.connect("token");
     }
 }

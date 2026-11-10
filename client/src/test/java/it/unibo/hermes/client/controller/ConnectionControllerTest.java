@@ -76,7 +76,6 @@ class ConnectionControllerTest {
 
         verify(wsService).setOnConnected(runnableCaptor.capture());
 
-        // Simulate the WebSocketService reporting a successful handshake
         runnableCaptor.getValue().run();
 
         verify(stateModel).setConnectionState(ConnectionState.CONNECTED);
@@ -189,6 +188,39 @@ class ConnectionControllerTest {
 
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConnectionState(ConnectionState.RECONNECTING);
         verify(wsService, timeout(ASYNC_TIMEOUT_MS).times(2)).connect("token123");
+    }
+
+    @Test
+    void disconnectDuringPendingRetryShouldCancelRetryAndNotConnect() throws InterruptedException {
+        ReflectionTestUtils.setField(props, "reconnectMaxAttempts", 3);
+        ReflectionTestUtils.setField(props, "reconnectBaseDelayMs", 100L);
+        ReflectionTestUtils.setField(props, "reconnectMaxDelayMs", 500L);
+
+        controller.connect("token123");
+        verify(wsService).setOnDisconnected(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+        verify(stateModel).setConnectionState(ConnectionState.RECONNECTING);
+
+        controller.disconnect();
+
+        Thread.sleep(200);
+
+        verify(wsService, times(1)).connect("token123");
+    }
+
+    @Test
+    void forceReconnectWhenLoggedOutShouldNotCallConnectWithNull() {
+        controller.connect("token123");
+        verify(wsService).setOnSystemMessage(systemMessageCaptor.capture());
+
+        controller.disconnect();
+        clearInvocations(wsService);
+
+        systemMessageCaptor.getValue().accept(new SystemMessageDto(
+                "FORCE_RECONNECT", "BACKBONE_RECOVERED"));
+
+        verify(wsService, never()).connect(any());
     }
 
     @Test

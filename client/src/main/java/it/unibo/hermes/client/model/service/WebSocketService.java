@@ -14,6 +14,7 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -29,6 +30,7 @@ public class WebSocketService {
     private final AppProperties props;
     private final AtomicReference<StompSession> session = new AtomicReference<>();
     private final Set<String> pendingAcks = ConcurrentHashMap.newKeySet();
+    private final AtomicLong connectionGeneration = new AtomicLong(0);
 
     // Callbacks injected by ConnectionController
     private volatile Consumer<InboundMessageDto> onMessage = msg -> {
@@ -132,36 +134,88 @@ public class WebSocketService {
      * @param rawToken the JWT to use for authentication
      */
     public void connect(String rawToken) {
+        long gen = connectionGeneration.incrementAndGet();
+
+        StompSession oldSession = session.getAndSet(null);
+        if (oldSession != null && oldSession.isConnected()) {
+            try {
+                oldSession.disconnect();
+            } catch (RuntimeException e) {
+                log.warn("Error while closing previous session: {}", e.getMessage());
+            }
+        }
+
         String url = props.getWsUrl();
-        log.info("Connecting to WebSocket: {}", url);
+        log.info("Connecting to WebSocket (generation {}): {}", gen, url);
 
         WebSocketHttpHeaders httpHeaders = new WebSocketHttpHeaders();
         StompHeaders stompConnectHeaders = new StompHeaders();
         stompConnectHeaders.add("Authorization", "Bearer " + rawToken);
 
+        AtomicReference<StompSession> activeSessionRef = new AtomicReference<>();
+
         StompSessionHandler handler = new StompSessionHandler(
                 props,
-                msg -> onMessage.accept(msg),
-                ack -> onAck.accept(ack),
-                err -> onAppError.accept(err),
-                msg -> onSystemMessage.accept(msg),
-                () -> onConnected.run(),
-                err -> onError.accept(err),
+                msg -> {
+                    if (connectionGeneration.get() == gen) {
+                        onMessage.accept(msg);
+                    }
+                },
+                ack -> {
+                    if (connectionGeneration.get() == gen) {
+                        onAck.accept(ack);
+                    }
+                },
+                err -> {
+                    if (connectionGeneration.get() == gen) {
+                        onAppError.accept(err);
+                    }
+                },
+                msg -> {
+                    if (connectionGeneration.get() == gen) {
+                        onSystemMessage.accept(msg);
+                    }
+                },
                 () -> {
-                    session.set(null);
-                    onDisconnected.run();
+                    if (connectionGeneration.get() == gen) {
+                        onConnected.run();
+                    }
+                },
+                err -> {
+                    if (connectionGeneration.get() == gen) {
+                        onError.accept(err);
+                    }
+                },
+                () -> {
+                    StompSession currentSession = activeSessionRef.get();
+                    if (currentSession != null) {
+                        session.compareAndSet(currentSession, null);
+                    }
+                    if (connectionGeneration.get() == gen) {
+                        onDisconnected.run();
+                    }
                 });
 
         stompClient.connectAsync(url, httpHeaders, stompConnectHeaders, handler)
                 .thenApply(s -> {
-                    session.set(s);
-                    flushPendingAcks();
-                    onReadyToSend.run();
+                    activeSessionRef.set(s);
+                    if (connectionGeneration.get() == gen) {
+                        session.set(s);
+                        flushPendingAcks();
+                        onReadyToSend.run();
+                    } else {
+                        log.info("Connection established for stale generation {}, disconnecting", gen);
+                        if (s != null && s.isConnected()) {
+                            s.disconnect();
+                        }
+                    }
                     return s;
                 })
                 .exceptionally(e -> {
-                    log.error("WebSocket connection failed: {}", e.getMessage());
-                    onError.accept(e);
+                    if (connectionGeneration.get() == gen) {
+                        log.error("WebSocket connection failed: {}", e.getMessage());
+                        onError.accept(e);
+                    }
                     return null;
                 });
     }
@@ -201,6 +255,7 @@ public class WebSocketService {
      * Disconnects the WebSocket connection if it is currently open.
      */
     public void disconnect() {
+        connectionGeneration.incrementAndGet(); // Invalidates callbacks from current/pending sessions
         pendingAcks.clear();
         StompSession s = session.getAndSet(null);
         if (s != null && s.isConnected()) {

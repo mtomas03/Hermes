@@ -49,7 +49,7 @@ public class ConnectionController {
     private final AppProperties props;
     private final MessageService msgService;
     private final AtomicInteger retryCount = new AtomicInteger(0);
-    private ScheduledFuture<?> pending = null;
+    private volatile ScheduledFuture<?> pending = null;
     private volatile String currentToken;
     private volatile Runnable onConnectedCallback = () -> {
     };
@@ -172,14 +172,23 @@ public class ConnectionController {
         log.info("System message received: {} ({})", msg.type(), msg.reason());
         if ("FORCE_RECONNECT".equals(msg.type())) {
             log.warn("Gateway requested a forced reconnect ({}) - reconnecting to resync", msg.reason());
-            stateModel.setConnectionState(ConnectionState.RECONNECTING);
-            stateModel.setStatusMessage("Resynchronising...");
-            wsService.disconnect();
-            wsService.connect(currentToken);
+            if (currentToken != null) {
+                stateModel.setConnectionState(ConnectionState.RECONNECTING);
+                stateModel.setStatusMessage("Re-synchronising");
+                wsService.disconnect();
+                wsService.connect(currentToken);
+            } else {
+                log.warn("Cannot force reconnect: currentToken is null");
+            }
         }
     }
 
     private void scheduleRetry(String rawToken) {
+        if (!rawToken.equals(currentToken)) {
+            log.info("Reconnect retry skipped: session logged out or token changed");
+            return;
+        }
+
         int attempt = retryCount.incrementAndGet();
         if (attempt > props.getReconnectMaxAttempts()) {
             log.error("Max reconnect attempts ({}) reached", props.getReconnectMaxAttempts());
@@ -198,6 +207,10 @@ public class ConnectionController {
         stateModel.setStatusMessage("Reconnecting (attempt " + attempt + ")");
 
         pending = scheduler.schedule(() -> {
+            if (!rawToken.equals(currentToken)) {
+                log.info("Scheduled reconnect attempt #{} cancelled: logged out or token changed", attempt);
+                return;
+            }
             log.info("Attempting reconnect #{}", attempt);
             wsService.connect(rawToken);
         }, delay, TimeUnit.MILLISECONDS);

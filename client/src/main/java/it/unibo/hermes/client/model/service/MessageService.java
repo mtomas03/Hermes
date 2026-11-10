@@ -109,10 +109,7 @@ public class MessageService {
                 }
                 totalSubmitted += passSubmitted;
 
-                isFlushing.set(false); // Briefly release
-
-                // Double-check flag and re-acquire lock to loop back cleanly if another
-                // send() or reconnect requested a flush while we were finishing.
+                isFlushing.set(false);
                 keepFlushing = flushAgain.get() && isFlushing.compareAndSet(false, true);
             } while (keepFlushing);
 
