@@ -62,6 +62,20 @@ public class NavigationController {
     }
 
     public void initPrimaryFrame(JFrame frame) {
+        this.stateModel.addAuthStateListener(evt -> {
+            if (this.stateModel.getAuthState() == AuthState.TOKEN_EXPIRED) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(
+                            frame,
+                            "Your session has expired. Please log in again.",
+                            "Session expired",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    showLogin();
+                });
+            }
+        });
+
         this.cardLayout = new CardLayout();
         this.cardPanel = new JPanel(cardLayout);
         frame.add(cardPanel);

@@ -212,4 +212,19 @@ class AuthControllerTest {
         verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).connect("jwt-token-bob");
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setAuthState(AuthState.AUTHENTICATED);
     }
+
+    @Test
+    void expiredTokenShouldTriggerTokenExpiredStateAndDisconnect() throws InterruptedException {
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
+        AuthResponseDto response = new AuthResponseDto("jwt-token", "alice", 50);
+        when(authService.login("alice", "secret")).thenReturn(Mono.just(response));
+
+        controller.login("alice", "secret", onError);
+        Thread.sleep(150);
+
+        verify(connectionController).disconnect();
+        verify(persistence).clearAuthToken();
+        verify(stateModel).clearSession();
+        verify(stateModel).setAuthState(AuthState.TOKEN_EXPIRED);
+    }
 }

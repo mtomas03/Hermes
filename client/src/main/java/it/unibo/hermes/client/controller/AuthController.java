@@ -12,6 +12,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -30,6 +35,13 @@ public class AuthController {
     private final LocalPersistenceService persistence;
     private final ConnectionController connectionController;
     private final SyncController syncController;
+
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "auth-expiry");
+        t.setDaemon(true);
+        return t;
+    });
+    private ScheduledFuture<?> expirationAuthTokenTask;
 
     public AuthController(AuthService authService,
                           ClientStateModel stateModel,
@@ -97,6 +109,9 @@ public class AuthController {
      * Logs the user out.
      */
     public void logout() {
+        if (expirationAuthTokenTask != null) {
+            expirationAuthTokenTask.cancel(false);
+        }
         try {
             persistence.clearAuthToken();
         } finally {
@@ -156,12 +171,34 @@ public class AuthController {
 
         log.info("Authenticated as {}", user.username());
 
-        // Open WebSocket, then sync once connected
+        if (expirationAuthTokenTask != null) {
+            expirationAuthTokenTask.cancel(false);
+        }
+        long delayMs = Math.max(0, Duration.between(Instant.now(), token.expiresAt()).toMillis());
+        expirationAuthTokenTask = scheduler.schedule(this::handleTokenExpired, delayMs, TimeUnit.MILLISECONDS);
+
         connectionController.setOnConnectedCallback(syncController::syncAll);
         connectionController.connect(token.rawToken());
 
-        // Trigger navigation by setting AUTHENTICATED state
         stateModel.setAuthState(AuthState.AUTHENTICATED);
+    }
+
+    private void handleTokenExpired() {
+        log.info("JWT expired, terminating session");
+        try {
+            persistence.clearAuthToken();
+        } finally {
+            try {
+                connectionController.disconnect();
+            } catch (RuntimeException e) {
+                log.warn("Error while closing connection on token expiry: {}", e.getMessage());
+            }
+            persistence.clearLocalUser();
+            stateModel.clearSession();
+            syncController.resetSyncState();
+            stateModel.setAuthState(AuthState.TOKEN_EXPIRED);
+            stateModel.setStatusMessage("Session expired. Please log in again.");
+        }
     }
 
     private String userFriendlyError(Throwable e) {
