@@ -28,6 +28,7 @@ public class MessageService {
     private final LocalPersistenceService persistenceService;
     private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
+    private final AtomicBoolean flushAgain = new AtomicBoolean(false);
 
     public MessageService(WebSocketService wsService, LocalPersistenceService persistenceService) {
         this.wsService = wsService;
@@ -37,10 +38,9 @@ public class MessageService {
     /**
      * Sends a message to {@code recipientUsername} in {@code conversationId}.
      *
-     * <p> The message is first stored in the local outbox (status {@link MessageStatus#PENDING}) and then
-     * submitted on the WebSocket. Submitting it does not prove that the Gateway received it,
-     * so it stays PENDING until the Gateway answers with its ACK.
-     * Until then, it is retransmitted with the same message ID each time the connection is re-established.
+     * <p> The message is first stored in the local outbox, with status {@link MessageStatus#PENDING},
+     * and then submitted on the WebSocket by triggering an outbox flush.
+     * This guarantees ordering and prevents race conditions with background reconnect flushes.
      *
      * @param senderUsername    the username of the sender (local user)
      * @param conversationId    the unique identifier of the conversation
@@ -68,11 +68,7 @@ public class MessageService {
         persistenceService.saveMessage(local);
         log.debug("Saved outbound message locally: {}", messageId);
 
-        if (transmit(local)) {
-            log.info("Message submitted via WebSocket, awaiting server ACK: {}", messageId);
-        } else {
-            log.warn("Message kept in the outbox (WebSocket unavailable): {}", messageId);
-        }
+        flushOutbox(senderUsername);
         return local;
     }
 
@@ -80,34 +76,53 @@ public class MessageService {
      * Retransmits the messages of {@code senderUsername} that the server has not
      * confirmed: needed to be called when the STOMP session is ready to send.
      *
-     * <p> A message, that was received by the server but whose ACK was lost, is sent again.
-     * Messages are sent oldest first and the flush stops at the first failed submission,
-     * leaving the remaining ones {@link MessageStatus#PENDING} for the next reconnection.
+     * <p> Uses a coalescing "flush again" flag: if a flush is already active, it registers
+     * the request and returns immediately. The active flush will loop back and re-flush,
+     * ensuring no reconnect triggers are dropped.
      *
      * @param senderUsername the local user whose outbox is flushed
      * @return the number of messages submitted
      */
     public int flushOutbox(String senderUsername) {
+        flushAgain.set(true);
         if (!isFlushing.compareAndSet(false, true)) {
-            log.debug("Outbox flush already in progress");
+            log.debug("Outbox flush already in progress, coalesced requested pass");
             return 0;
         }
+
+        int totalSubmitted = 0;
         try {
-            int submitted = 0;
-            for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
-                if (!transmit(pending)) {
-                    log.warn("Outbox flush interrupted at message {}: {} submitted, rest kept pending",
-                            pending.getMessageId(), submitted);
-                    return submitted;
+            boolean keepFlushing;
+            do {
+                flushAgain.set(false);
+                int passSubmitted = 0;
+
+                for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
+                    if (!transmit(pending)) {
+                        log.warn("Outbox flush interrupted at message {}: {} submitted this pass",
+                                pending.getMessageId(), passSubmitted);
+                        flushAgain.set(false);
+                        isFlushing.set(false);
+                        return totalSubmitted + passSubmitted;
+                    }
+                    passSubmitted++;
                 }
-                submitted++;
+                totalSubmitted += passSubmitted;
+
+                isFlushing.set(false); // Briefly release
+
+                // Double-check flag and re-acquire lock to loop back cleanly if another
+                // send() or reconnect requested a flush while we were finishing.
+                keepFlushing = flushAgain.get() && isFlushing.compareAndSet(false, true);
+            } while (keepFlushing);
+
+            if (totalSubmitted > 0) {
+                log.info("Outbox flushed: {} messages submitted, awaiting server ACK", totalSubmitted);
             }
-            if (submitted > 0) {
-                log.info("Outbox flushed: {} messages retransmitted, awaiting server ACK", submitted);
-            }
-            return submitted;
-        } finally {
+            return totalSubmitted;
+        } catch (Exception e) {
             isFlushing.set(false);
+            throw e;
         }
     }
 
