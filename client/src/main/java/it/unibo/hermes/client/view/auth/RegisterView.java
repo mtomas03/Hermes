@@ -50,26 +50,38 @@ public class RegisterView extends AuthBaseView {
 
         // Actions
         regBtn.addActionListener(e -> {
-            String u = usernameField.getText().trim();
-            String p = new String(passwordField.getPassword());
-            String p2 = new String(confirmField.getPassword());
+            String username = usernameField.getText().trim();
+            String password = new String(passwordField.getPassword());
+            String passwordConfirm = new String(confirmField.getPassword());
 
-            if (u.isEmpty() || p.isEmpty() || p2.isEmpty()) {
-                showPopup(form, "All fields are required.", "Error", JOptionPane.WARNING_MESSAGE);
+            if (username.isEmpty() || password.isEmpty() || passwordConfirm.isEmpty()) {
+                showPopup(form,
+                        "All fields are required.",
+                        "Error", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            if (!p.equals(p2)) {
-                showPopup(form, "Passwords do not match.", "Error", JOptionPane.WARNING_MESSAGE);
+            if (!username.matches("^[a-z0-9_]{3,32}$")) {
+                showPopup(form,
+                        "Username must be 3-32 characters and contain only lowercase letters, numbers and underscores.",
+                        "Error", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            if (p.length() < 8) {
-                showPopup(form, "Password must be at least 8 characters.", "Error", JOptionPane.WARNING_MESSAGE);
+            if (!password.equals(passwordConfirm)) {
+                showPopup(form,
+                        "Passwords do not match.",
+                        "Error", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (password.length() < 8) {
+                showPopup(form,
+                        "Password must be at least 8 characters.",
+                        "Error", JOptionPane.WARNING_MESSAGE);
                 return;
             }
 
             regBtn.setEnabled(false);
 
-            authController.register(u, p,
+            authController.register(username, password,
                     () -> {
                         regBtn.setEnabled(true);
                         showPopup(form, "Account created! Redirecting", "Success", JOptionPane.INFORMATION_MESSAGE);
