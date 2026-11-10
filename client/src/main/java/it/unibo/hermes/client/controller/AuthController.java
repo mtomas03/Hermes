@@ -112,19 +112,21 @@ public class AuthController {
         if (expirationAuthTokenTask != null) {
             expirationAuthTokenTask.cancel(false);
         }
-        try {
-            persistence.clearAuthToken();
-        } finally {
+        Schedulers.boundedElastic().schedule(() -> {
             try {
-                connectionController.disconnect();
-            } catch (RuntimeException e) {
-                log.warn("Error while closing the connection during logout: {}", e.getMessage());
+                persistence.clearAuthToken();
+            } finally {
+                try {
+                    connectionController.disconnect();
+                } catch (RuntimeException e) {
+                    log.warn("Error while closing the connection during logout: {}", e.getMessage());
+                }
+                persistence.clearLocalUser();
+                stateModel.clearSession();
+                syncController.resetSyncState();
+                stateModel.setStatusMessage("Logged out");
             }
-            persistence.clearLocalUser();
-            stateModel.clearSession();
-            syncController.resetSyncState();
-            stateModel.setStatusMessage("Logged out");
-        }
+        });
     }
 
     /**

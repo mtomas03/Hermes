@@ -27,20 +27,14 @@ public class HermesClientApp {
             context = new AnnotationConfigApplicationContext(AppConfig.class);
             log.info("Spring context ready");
 
-            JFrame frame = new JFrame("Hermes");
-            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.setSize(800, 560);
-            frame.setMinimumSize(new Dimension(800, 560));
-            frame.setLocationRelativeTo(null);
-
             NavigationController nav = context.getBean(NavigationController.class);
-            nav.initPrimaryFrame(frame);
+            nav.initPrimaryFrame();
             nav.showLogin();
 
             AuthController auth = context.getBean(AuthController.class);
             runAsync(auth::restoreSession);
 
-            frame.setVisible(true);
+            nav.setPrimaryFrameVisible(true);
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 log.info("Application shutting down");

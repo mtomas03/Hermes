@@ -130,6 +130,6 @@ class SyncControllerTest {
 
         controller.refreshActiveMessages("alice-bob");
 
-        verify(stateModel).replaceMessages(List.of(msg));
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(List.of(msg));
     }
 }

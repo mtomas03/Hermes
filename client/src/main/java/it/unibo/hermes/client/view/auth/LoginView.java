@@ -52,10 +52,10 @@ public class LoginView extends AuthBaseView {
                 return;
             }
             loginBtn.setEnabled(false);
-            authController.login(u, p, err -> {
+            authController.login(u, p, err -> SwingUtilities.invokeLater(() -> {
                 loginBtn.setEnabled(true);
                 showPopup(form, err, "Login Error", JOptionPane.ERROR_MESSAGE);
-            });
+            }));
         };
 
         loginBtn.addActionListener(e -> doLogin.run());

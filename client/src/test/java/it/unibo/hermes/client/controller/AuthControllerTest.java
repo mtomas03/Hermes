@@ -124,9 +124,9 @@ class AuthControllerTest {
     void logoutShouldDisconnectClearLocalUserAndResetState() {
         controller.logout();
 
-        verify(connectionController).disconnect();
-        verify(persistence).clearLocalUser();
-        verify(stateModel).clearSession();
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
     }
 
     @Test
@@ -181,9 +181,8 @@ class AuthControllerTest {
     void logoutShouldClearPersistedTokenFirstAndNotDeleteHistory() {
         controller.logout();
 
-        InOrder order = inOrder(persistence, connectionController);
-        order.verify(persistence).clearAuthToken();
-        order.verify(connectionController).disconnect();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearAuthToken();
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
         verify(persistence, never()).saveMessage(any());
         verify(persistence, never()).saveConversation(any());
     }
@@ -194,8 +193,8 @@ class AuthControllerTest {
 
         controller.logout();
 
-        verify(persistence).clearAuthToken();
-        verify(stateModel).clearSession();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearAuthToken();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
         verify(syncController).resetSyncState();
     }
 

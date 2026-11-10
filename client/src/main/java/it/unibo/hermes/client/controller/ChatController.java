@@ -78,15 +78,17 @@ public class ChatController {
         }
         if (content == null || content.isBlank()) return;
 
-        Message msg = messageService.send(
-                self.username(),
-                conv.conversationId(),
-                conv.recipientUsername().username(),
-                content.trim());
+        String trimmed = content.trim();
+        Schedulers.boundedElastic().schedule(() -> {
+            Message msg = messageService.send(
+                    self.username(),
+                    conv.conversationId(),
+                    conv.recipientUsername().username(),
+                    trimmed);
 
-        // Optimistic append: view reacts via ObservableList listener
-        stateModel.appendMessage(msg);
-        log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
+            stateModel.appendMessage(msg);
+            log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
+        });
     }
 
     /**

@@ -60,6 +60,7 @@ public class SyncController {
 
         syncService.fetchConversations(token.bearerHeader())
                 .subscribeOn(Schedulers.boundedElastic())
+                .publishOn(Schedulers.boundedElastic())
                 .subscribe(
                         list -> processConversations(list, token),
                         err -> {
@@ -106,8 +107,10 @@ public class SyncController {
      * @param conversationId the unique identifier of the conversation whose messages are to be refreshed
      */
     public void refreshActiveMessages(String conversationId) {
-        List<Message> messages = persistence.loadMessages(conversationId);
-        stateModel.replaceMessages(messages);
+        Schedulers.boundedElastic().schedule(() -> {
+            List<Message> messages = persistence.loadMessages(conversationId);
+            stateModel.replaceMessages(messages);
+        });
     }
 
     /**
@@ -166,6 +169,7 @@ public class SyncController {
                 conversationId,
                 id -> syncService
                         .syncConversation(id, token.bearerHeader())
+                        .publishOn(Schedulers.boundedElastic())
                         .map(response -> {
                             User current = stateModel.getCurrentUser();
                             syncService.applySync(response, current != null ? current.username() : null);
