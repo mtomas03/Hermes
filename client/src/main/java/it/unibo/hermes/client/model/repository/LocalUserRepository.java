@@ -28,7 +28,7 @@ public class LocalUserRepository {
      * @param user the user to save
      */
     public void save(User user) {
-        String sql = "INSERT OR REPLACE INTO user (username) VALUES (?)";
+        String sql = "INSERT OR REPLACE INTO user (id, username) VALUES (1, ?)";
         try (Connection conn = db.getDataSource().getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, user.username());

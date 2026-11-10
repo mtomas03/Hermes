@@ -139,6 +139,11 @@ public class AuthController {
         AuthToken token = new AuthToken(resp.token(), expiresAt);
         User user = new User(resp.username());
 
+        Optional<User> existingUser = persistence.loadLocalUser();
+        if (existingUser.isPresent() && !existingUser.get().username().equals(user.username())) {
+            persistence.clearLocalUser();
+        }
+
         persistence.saveAuthToken(token);
         persistence.saveLocalUser(user);
         startSession(token, user);

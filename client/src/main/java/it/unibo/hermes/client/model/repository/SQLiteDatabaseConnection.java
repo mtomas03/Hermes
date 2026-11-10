@@ -50,6 +50,7 @@ public class SQLiteDatabaseConnection {
 
             stmt.execute("""
                     CREATE TABLE IF NOT EXISTS user (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
                         username TEXT NOT NULL
                     )""");
 

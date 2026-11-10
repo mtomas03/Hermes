@@ -53,6 +53,7 @@ class AuthControllerTest {
     @Test
     void successfulLoginShouldStoreTokenAndUserAndAuthenticate() {
         AuthResponseDto response = new AuthResponseDto("jwt-token", "alice", 3_600_000);
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
         when(authService.login("alice", "secret")).thenReturn(Mono.just(response));
 
         controller.login("alice", "secret", onError);
@@ -130,6 +131,7 @@ class AuthControllerTest {
 
     @Test
     void successfulLoginShouldPersistTheToken() {
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
         when(authService.login("alice", "secret"))
                 .thenReturn(Mono.just(new AuthResponseDto("jwt-token", "alice", 3_600_000)));
 
@@ -195,5 +197,19 @@ class AuthControllerTest {
         verify(persistence).clearAuthToken();
         verify(stateModel).clearSession();
         verify(syncController).resetSyncState();
+    }
+
+    @Test
+    void loginWithDifferentUserShouldClearPreviousLocalUser() {
+        when(persistence.loadLocalUser()).thenReturn(Optional.of(new User("alice")));
+        AuthResponseDto response = new AuthResponseDto("jwt-token-bob", "bob", 3_600_000);
+        when(authService.login("bob", "secret")).thenReturn(Mono.just(response));
+
+        controller.login("bob", "secret", onError);
+
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveLocalUser(new User("bob"));
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).connect("jwt-token-bob");
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setAuthState(AuthState.AUTHENTICATED);
     }
 }
