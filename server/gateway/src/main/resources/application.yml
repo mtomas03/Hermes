@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: hermes-gateway
+
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/hermes}
+    username: ${POSTGRES_USER:hermes}
+    password: ${POSTGRES_PASSWORD:hermes}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-timeout: ${POSTGRES_CONNECTION_TIMEOUT_MS:3000}
+      keepalive-time: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update # auto-create schema on first run
+    show-sql: false
+
+  cassandra:
+    keyspace-name: hermes
+    contact-points: ${CASSANDRA_HOST:localhost}
+    port: ${CASSANDRA_PORT:9042}
+    local-datacenter: ${CASSANDRA_DC:datacenter1}
+    schema-action: none # schema managed via schema.cql
+    request:
+      timeout: 5s
+      consistency: LOCAL_QUORUM
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+      repositories:
+        enabled: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 0 # retries managed by adapter/service
+      properties:
+        delivery.timeout.ms: 5000
+        request.timeout.ms: 3000
+        max.block.ms: 3000
+    consumer:
+      group-id: hermes-gateway
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+hermes:
+  topics:
+    message-created: ${KAFKA_TOPIC_CREATED:message-created}
+    message-acknowledged: ${KAFKA_TOPIC_ACK:message-acknowledged}
+    message-delivery: ${KAFKA_TOPIC_DELIVERY:message-delivery}
+
+  jwt:
+    secret: ${JWT_SECRET:dGhpcy1pcy1hLXN0cm9uZy1zZWNyZXQtZm9yLWhlcm1lcy1kZXY=}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000} # 24h
+
+  gateway:
+    instance-id: ${GATEWAY_ID:gateway-1}
+    heartbeat-check-ms: ${HB_CHECK_MS:30000} # presence TTL refresh interval
+
+  kafka:
+    retry:
+      max-attempts: 3
+      initial-backoff-ms: 100
+      backoff-multiplier: 2.0
+
+  presence:
+    ttl-seconds: ${PRESENCE_TTL:300} # 5min TTL on online keys
+
+logging:
+  level:
+    it.unibo.hermes.gateway: DEBUG
+    org.springframework.web.socket: INFO
+    org.apache.kafka: WARN

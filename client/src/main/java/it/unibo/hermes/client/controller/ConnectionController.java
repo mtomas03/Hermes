@@ -1,0 +1,211 @@
+package it.unibo.hermes.client.controller;
+
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
+import it.unibo.hermes.client.model.domain.Conversation;
+import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AckDto;
+import it.unibo.hermes.client.model.dto.ErrorDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
+import it.unibo.hermes.client.model.dto.SystemMessageDto;
+import it.unibo.hermes.client.model.service.MessageService;
+import it.unibo.hermes.client.model.service.WebSocketService;
+import it.unibo.hermes.client.model.state.ClientStateModel;
+import it.unibo.hermes.client.model.state.ConnectionState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Manages the full WebSocket connection lifecycle:
+ * connect, disconnect and bounded-progressive exponential retry on failure.
+ *
+ * <p>The UI reacts to state changes via {@link ClientStateModel} observable properties
+ */
+@Component
+public class ConnectionController {
+
+    private static final Logger log = LoggerFactory.getLogger(ConnectionController.class);
+    private static final Set<String> PERMANENT_REJECTIONS =
+            Set.of("MISSING_RECIPIENT", "MISSING_CONTENT", "SELF_SEND", "INVALID_CONVERSATION");
+
+    private final ScheduledExecutorService scheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ws-reconnect");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private final WebSocketService wsService;
+    private final ClientStateModel stateModel;
+    private final AppProperties props;
+    private final MessageService msgService;
+    private final AtomicInteger retryCount = new AtomicInteger(0);
+    private ScheduledFuture<?> pending = null;
+    private volatile String currentToken;
+    private volatile Runnable onConnectedCallback = () -> {
+    };
+
+    public ConnectionController(WebSocketService wsService,
+                                ClientStateModel stateModel,
+                                AppProperties props,
+                                MessageService msgService) {
+        this.wsService = wsService;
+        this.stateModel = stateModel;
+        this.props = props;
+        this.msgService = msgService;
+    }
+
+    /**
+     * Sets a callback to be executed when the WebSocket connection is established.
+     *
+     * @param callback the callback to execute on connection
+     */
+    public void setOnConnectedCallback(Runnable callback) {
+        this.onConnectedCallback = callback;
+    }
+
+    /**
+     * Wires callbacks on the WS service and initiates the STOMP connection.
+     *
+     * @param rawToken the JWT token to use for authentication
+     */
+    public void connect(String rawToken) {
+        this.currentToken = rawToken;
+        wsService.setOnConnected(() -> {
+            log.info("WebSocket connected");
+            retryCount.set(0);
+            stateModel.setConnectionState(ConnectionState.CONNECTED);
+            stateModel.setStatusMessage("Online");
+            onConnectedCallback.run();
+        });
+
+        wsService.setOnReadyToSend(this::scheduleOutboxFlush);
+        wsService.setOnMessage(this::handleInboundMessage);
+        wsService.setOnAck(this::handleAck);
+        wsService.setOnAppError(this::handleAppError);
+        wsService.setOnSystemMessage(this::handleSystemMessage);
+
+        wsService.setOnError(err ->
+                log.warn("WebSocket error: {}", err.getMessage()));
+
+        wsService.setOnDisconnected(() -> {
+            log.info("WebSocket disconnected");
+            stateModel.setConnectionState(ConnectionState.DISCONNECTED);
+            stateModel.setStatusMessage("Offline");
+            scheduleRetry(rawToken);
+        });
+
+        stateModel.setConnectionState(ConnectionState.CONNECTING);
+        stateModel.setStatusMessage("Connecting");
+        wsService.connect(rawToken);
+    }
+
+    /**
+     * Disconnects the WebSocket and cancels any pending reconnect attempts.
+     */
+    public void disconnect() {
+        cancelPending();
+        this.currentToken = null;
+        wsService.disconnect();
+        stateModel.setConnectionState(ConnectionState.DISCONNECTED);
+        stateModel.setStatusMessage("Disconnected");
+    }
+
+    private void handleInboundMessage(InboundMessageDto dto) {
+        log.debug("Inbound: {} in conv {}", dto.messageId(), dto.conversationId());
+
+        Message msg;
+        try {
+            msg = msgService.receiveAndPersist(dto);
+        } catch (MessagePersistenceException e) {
+            log.error("Could not persist inbound message {} - no ACK will be sent: {}",
+                    dto.messageId(), e.getMessage());
+            return;
+        }
+
+        // Only update the active message list if this conv is currently open
+        Conversation selected = stateModel.getSelectedConversation();
+        if (selected != null && selected.conversationId().equals(dto.conversationId())) {
+            stateModel.appendMessage(msg);
+        }
+
+        wsService.sendAck(dto.messageId());
+    }
+
+    private void handleAck(AckDto ack) {
+        log.debug("ACK for {}: {}", ack.messageId(), ack.status());
+        msgService.acknowledgeDelivery(ack.messageId());
+    }
+
+    private void handleAppError(ErrorDto err) {
+        log.warn("Server rejected message [{}]: {} - {}", err.messageId(), err.code(), err.reason());
+        if (err.messageId() != null && PERMANENT_REJECTIONS.contains(err.code())) {
+            msgService.markRejected(err.messageId());
+        }
+    }
+
+    private void scheduleOutboxFlush() {
+        scheduler.execute(() -> {
+            User self = stateModel.getCurrentUser();
+            if (self == null) {
+                log.warn("Outbox not flushed: no local user");
+                return;
+            }
+            try {
+                msgService.flushOutbox(self.username());
+            } catch (RuntimeException e) {
+                log.warn("Outbox flush failed, messages stay pending: {}", e.getMessage());
+            }
+        });
+    }
+
+    private void handleSystemMessage(SystemMessageDto msg) {
+        log.info("System message received: {} ({})", msg.type(), msg.reason());
+        if ("FORCE_RECONNECT".equals(msg.type())) {
+            log.warn("Gateway requested a forced reconnect ({}) - reconnecting to resync", msg.reason());
+            stateModel.setConnectionState(ConnectionState.RECONNECTING);
+            stateModel.setStatusMessage("Resynchronising...");
+            wsService.disconnect();
+            wsService.connect(currentToken);
+        }
+    }
+
+    private void scheduleRetry(String rawToken) {
+        int attempt = retryCount.incrementAndGet();
+        if (attempt > props.getReconnectMaxAttempts()) {
+            log.error("Max reconnect attempts ({}) reached", props.getReconnectMaxAttempts());
+            stateModel.setConnectionState(ConnectionState.FAILED);
+            stateModel.setStatusMessage("Connection failed - please restart");
+            return;
+        }
+
+        // Exponential back-off capped at maxDelayMs
+        long delay = Math.min(
+                props.getReconnectBaseDelayMs() * (1L << Math.min(attempt - 1, 10)),
+                props.getReconnectMaxDelayMs());
+
+        log.info("Reconnect attempt {} in {} ms", attempt, delay);
+        stateModel.setConnectionState(ConnectionState.RECONNECTING);
+        stateModel.setStatusMessage("Reconnecting (attempt " + attempt + ")");
+
+        pending = scheduler.schedule(() -> {
+            log.info("Attempting reconnect #{}", attempt);
+            wsService.connect(rawToken);
+        }, delay, TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelPending() {
+        if (pending != null && !pending.isDone()) {
+            pending.cancel(false);
+        }
+    }
+}

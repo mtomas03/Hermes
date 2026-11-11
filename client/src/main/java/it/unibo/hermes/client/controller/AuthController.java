@@ -1,0 +1,175 @@
+package it.unibo.hermes.client.controller;
+
+import it.unibo.hermes.client.model.domain.AuthToken;
+import it.unibo.hermes.client.model.domain.User;
+import it.unibo.hermes.client.model.dto.AuthResponseDto;
+import it.unibo.hermes.client.model.service.AuthService;
+import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.state.AuthState;
+import it.unibo.hermes.client.model.state.ClientStateModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import reactor.core.scheduler.Schedulers;
+
+import java.time.Instant;
+import java.util.Optional;
+import java.util.function.Consumer;
+
+/**
+ * Handles user authentication: login, registration, logout
+ * and session management.
+ */
+@Component
+public class AuthController {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
+    private final AuthService authService;
+    private final ClientStateModel stateModel;
+    private final LocalPersistenceService persistence;
+    private final ConnectionController connectionController;
+    private final SyncController syncController;
+
+    public AuthController(AuthService authService,
+                          ClientStateModel stateModel,
+                          LocalPersistenceService persistence,
+                          ConnectionController connectionController,
+                          SyncController syncController) {
+        this.authService = authService;
+        this.stateModel = stateModel;
+        this.persistence = persistence;
+        this.connectionController = connectionController;
+        this.syncController = syncController;
+    }
+
+    /**
+     * Attempts to log in with the provided credentials.
+     *
+     * @param username the username to log in with
+     * @param password the password to log in with
+     * @param onError  callback invoked with a user-friendly error message if login fails
+     */
+    public void login(String username, String password, Consumer<String> onError) {
+        stateModel.setAuthState(AuthState.AUTHENTICATING);
+        stateModel.setStatusMessage("Logging in");
+
+        authService.login(username, password)
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                        this::handleLoginSuccess,
+                        err -> {
+                            log.warn("Login failed: {}", err.getMessage());
+                            stateModel.setAuthState(AuthState.UNAUTHENTICATED);
+                            stateModel.setStatusMessage("Login failed");
+                            onError.accept(userFriendlyError(err));
+                        });
+    }
+
+    /**
+     * Attempts to register a new account with the provided credentials.
+     *
+     * @param username  the desired username
+     * @param password  the desired password
+     * @param onSuccess callback invoked if registration succeeds
+     * @param onError   callback invoked with a user-friendly error message if registration fails
+     */
+    public void register(String username, String password,
+                         Runnable onSuccess, Consumer<String> onError) {
+        stateModel.setStatusMessage("Registering");
+
+        authService.register(username, password)
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnSuccess(v -> {
+                    log.info("Registration successful for {}", username);
+                    stateModel.setStatusMessage("Account created");
+                    onSuccess.run();
+                })
+                .doOnError(err -> {
+                    log.warn("Registration failed: {}", err.getMessage());
+                    stateModel.setStatusMessage("Registration failed");
+                    onError.accept(userFriendlyError(err));
+                })
+                .subscribe();
+    }
+
+    /**
+     * Logs the user out.
+     */
+    public void logout() {
+        try {
+            persistence.clearAuthToken();
+        } finally {
+            try {
+                connectionController.disconnect();
+            } catch (RuntimeException e) {
+                log.warn("Error while closing the connection during logout: {}", e.getMessage());
+            }
+            persistence.clearLocalUser();
+            stateModel.clearSession();
+            syncController.resetSyncState();
+            stateModel.setStatusMessage("Logged out");
+        }
+    }
+
+    /**
+     * Restores the previous session on application start,
+     * if a non-expired token and the local user are stored.
+     *
+     * @return {@code true} if a session was restored
+     */
+    public boolean restoreSession() {
+        Optional<AuthToken> token = persistence.loadValidAuthToken();
+        if (token.isEmpty()) {
+            return false;
+        }
+        Optional<User> user = persistence.loadLocalUser();
+        if (user.isEmpty()) {
+            persistence.clearAuthToken();
+            return false;
+        }
+        log.info("Restoring session for {}", user.get().username());
+        startSession(token.get(), user.get());
+        stateModel.setStatusMessage("Session restored");
+        return true;
+    }
+
+    private void handleLoginSuccess(AuthResponseDto resp) {
+        Instant expiresAt = Instant.now().plusMillis(resp.expiresInMs());
+        AuthToken token = new AuthToken(resp.token(), expiresAt);
+        User user = new User(resp.username());
+
+        persistence.saveAuthToken(token);
+        persistence.saveLocalUser(user);
+        startSession(token, user);
+        stateModel.setStatusMessage("Logged in");
+    }
+
+    private void startSession(AuthToken token, User user) {
+        stateModel.setAuthToken(token);
+        stateModel.setCurrentUser(user);
+
+        log.info("Authenticated as {}", user.username());
+
+        // Open WebSocket, then sync once connected
+        connectionController.setOnConnectedCallback(syncController::syncAll);
+        connectionController.connect(token.rawToken());
+
+        // Trigger navigation by setting AUTHENTICATED state
+        stateModel.setAuthState(AuthState.AUTHENTICATED);
+    }
+
+    private String userFriendlyError(Throwable e) {
+        String msg = e.getMessage();
+        if (msg == null) return "Unknown error.";
+        if (msg.contains("503"))
+            return "The service is temporarily unavailable. Please try again shortly.";
+        if (msg.contains("409"))
+            return "This username is already taken.";
+        if (msg.contains("Invalid credentials") || msg.contains("401"))
+            return "Invalid username or password.";
+        if (msg.contains("connect") || msg.contains("refused"))
+            return "Cannot reach the server. Check your connection.";
+        return msg;
+    }
+}
