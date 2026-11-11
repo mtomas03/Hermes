@@ -1,6 +1,8 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence;
 
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.model.Conversation;
+import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.domain.model.MessageStatus;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
@@ -56,15 +58,16 @@ class CassandraAdapterTest {
         ConversationByUser conv = new ConversationByUser("alice", "alice-bob", "bob");
         when(conversationByUserRepository.findByUsername("alice")).thenReturn(List.of(conv));
 
-        List<ConversationByUser> result = cassandraAdapter.findConversationsByUsername("alice");
+        List<Conversation> result = cassandraAdapter.findByUsername("alice");
 
-        assertThat(result).containsExactly(conv);
+        assertThat(result).containsExactly(new Conversation("alice-bob", "alice", "bob"));
         verify(conversationByUserRepository).findByUsername("alice");
     }
 
     @Test
     void shouldCheckIfUserIsParticipant() {
-        when(conversationByUserRepository.existsByUsernameAndConversationId("alice", "alice-bob")).thenReturn(true);
+        when(conversationByUserRepository.existsByUsernameAndConversationId(
+                "alice", "alice-bob")).thenReturn(true);
 
         boolean isParticipant = cassandraAdapter.isParticipant("alice", "alice-bob");
 
@@ -75,7 +78,7 @@ class CassandraAdapterTest {
     @Test
     void fallbackCreatesBothRowsWithConditionalInsertsAndNeverWithAPlainSave() {
         UUID messageId = UUID.randomUUID();
-        MessageByConversation fallbackMessage = new MessageByConversation(
+        Message fallbackMessage = new Message(
                 messageId, "alice-bob",
                 "alice", "bob",
                 "Fallback content", 1L, MessageStatus.STORED);
@@ -87,19 +90,21 @@ class CassandraAdapterTest {
         verify(cqlOperations).execute(
                 argThat((String cql) -> cql.startsWith("INSERT INTO messages_by_conversation")
                         && cql.contains("IF NOT EXISTS")),
-                eq("alice-bob"), eq(1L), eq(messageId), eq("alice"), eq("bob"), eq("Fallback content"),
+                eq("alice-bob"), eq(1L), eq(messageId),
+                eq("alice"), eq("bob"), eq("Fallback content"),
                 eq("STORED"));
         verify(cqlOperations).execute(
                 argThat((String cql) -> cql.startsWith("INSERT INTO message_by_id")
                         && cql.contains("IF NOT EXISTS")),
-                eq(messageId), eq("alice-bob"), eq("alice"), eq("bob"), eq("Fallback content"), eq(1L),
+                eq(messageId), eq("alice-bob"), eq("alice"),
+                eq("bob"), eq("Fallback content"), eq(1L),
                 eq("STORED"));
         verify(messageByConversationRepository, never()).save(any());
     }
 
     @Test
     void fallbackCreatesConversationIndexForBothParticipantsAndWritesMessageByIdLast() {
-        MessageByConversation message = new MessageByConversation(
+        Message message = new Message(
                 UUID.randomUUID(),
                 "alice-bob", "alice", "bob",
                 "hi", 1L, MessageStatus.STORED);
@@ -124,7 +129,7 @@ class CassandraAdapterTest {
 
     @Test
     void fallbackOnAMessageTheWorkerAlreadyAdvancedIsARejectedInsertNotAnErrorAndNeverWritesStored() {
-        MessageByConversation message = new MessageByConversation(
+        Message message = new Message(
                 UUID.randomUUID(), "alice-bob",
                 "alice", "bob",
                 "hi", 1L, MessageStatus.STORED);
@@ -141,7 +146,7 @@ class CassandraAdapterTest {
 
     @Test
     void fallbackPropagatesCassandraErrorsInsteadOfTreatingThemAsRejections() {
-        MessageByConversation message = new MessageByConversation(
+        Message message = new Message(
                 UUID.randomUUID(), "alice-bob",
                 "alice", "bob",
                 "hi", 1L, MessageStatus.STORED);
@@ -176,7 +181,7 @@ class CassandraAdapterTest {
         when(messageByConversationRepository.findAllByConversationId("alice-bob"))
                 .thenThrow(new QueryTimeoutException("read timed out"));
 
-        assertThatThrownBy(() -> cassandraAdapter.findAllMessages("alice-bob"))
+        assertThatThrownBy(() -> cassandraAdapter.findAllByConversation("alice-bob"))
                 .isInstanceOf(PersistenceUnavailableException.class);
     }
 
@@ -190,20 +195,21 @@ class CassandraAdapterTest {
     }
 
     @Test
-    void shouldReturnAllMessagesForConversation() {
+    void shouldReturnAllMessagesForConversationMappedToDomain() {
         String conversationId = "alice-bob";
-        List<MessageByConversation> expected = List.of(
-                new MessageByConversation(
-                        UUID.randomUUID(),
-                        conversationId, "alice", "bob",
-                        "hi", 1L, MessageStatus.STORED)
-        );
-
+        UUID messageId = UUID.randomUUID();
         when(messageByConversationRepository.findAllByConversationId(conversationId))
-                .thenReturn(expected);
-        List<MessageByConversation> result = cassandraAdapter.findAllMessages(conversationId);
+                .thenReturn(List.of(new MessageByConversation(
+                        messageId, conversationId,
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.STORED)));
 
-        assertThat(result).isEqualTo(expected).hasSize(1);
+        List<Message> result = cassandraAdapter.findAllByConversation(conversationId);
+
+        assertThat(result).containsExactly(
+                new Message(messageId, conversationId,
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.STORED));
         verify(messageByConversationRepository).findAllByConversationId(conversationId);
     }
 }

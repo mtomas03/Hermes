@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket.WebSocketSessionRegistry;
+import it.unibo.hermes.gateway.application.port.secondary.ConnectedClientsPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,7 +15,7 @@ import static org.mockito.Mockito.*;
 class HeartbeatServiceTest {
 
     @Mock
-    private WebSocketSessionRegistry registry;
+    private ConnectedClientsPort registry;
     @Mock
     private PresenceService presenceService;
 

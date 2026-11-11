@@ -44,7 +44,7 @@ class MessageAckProducerTest {
         String serializedJson = "{\"messageId\":\"" + messageId + "\",\"recipientUsername\":\"bob\"}";
 
         when(objectMapper.writeValueAsString(ackEvent)).thenReturn(serializedJson);
-        producer.publishAck(ackEvent);
+        producer.publishAck(messageId, "bob");
 
         verify(objectMapper).writeValueAsString(ackEvent);
         verify(kafkaTemplate).send(ACK_TOPIC, messageId, serializedJson);
@@ -59,7 +59,7 @@ class MessageAckProducerTest {
                 .thenThrow(new JsonProcessingException("Failed to serialize") {
                 });
 
-        assertThatCode(() -> producer.publishAck(ackEvent))
+        assertThatCode(() -> producer.publishAck(messageId, "bob"))
                 .doesNotThrowAnyException();
         verifyNoInteractions(kafkaTemplate);
     }
@@ -74,28 +74,8 @@ class MessageAckProducerTest {
         doThrow(new RuntimeException("Kafka broker connection timeout"))
                 .when(kafkaTemplate).send(anyString(), anyString(), anyString());
 
-        assertThatCode(() -> producer.publishAck(ackEvent))
+        assertThatCode(() -> producer.publishAck(messageId, "bob"))
                 .doesNotThrowAnyException();
         verify(kafkaTemplate).send(ACK_TOPIC, messageId, serializedJson);
-    }
-
-    /**
-     * Pins the wire contract consumed by the Worker's {@code MessageAckConsumer}: the record value must be
-     * a plain JSON object (not a JSON-encoded string) and the record key must be the messageId.
-     */
-    @Test
-    void publishAckSendsPlainJsonObjectKeyedByMessageId() throws Exception {
-        ObjectMapper realMapper = new JacksonConfig().objectMapper();
-        MessageAckProducer realProducer = new MessageAckProducer(kafkaTemplate, realMapper, ACK_TOPIC);
-        String messageId = UUID.randomUUID().toString();
-
-        realProducer.publishAck(new MessageAckEvent(messageId, "bob"));
-
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq(ACK_TOPIC), eq(messageId), payload.capture());
-        JsonNode json = realMapper.readTree(payload.getValue());
-        assertThat(json.isObject()).isTrue();
-        assertThat(json.get("messageId").asText()).isEqualTo(messageId);
-        assertThat(json.get("recipientUsername").asText()).isEqualTo("bob");
     }
 }

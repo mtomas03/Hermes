@@ -1,83 +1,68 @@
 package it.unibo.hermes.gateway.application.service;
 
+import it.unibo.hermes.gateway.application.model.AuthResult;
 import it.unibo.hermes.gateway.application.port.primary.AuthPort;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AuthResponseDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.LoginRequestDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.RegisterRequestDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.jpa.User;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.jpa.UserRepository;
-import it.unibo.hermes.gateway.infrastructure.security.JwtProvider;
+import it.unibo.hermes.gateway.application.port.secondary.PasswordHasherPort;
+import it.unibo.hermes.gateway.application.port.secondary.TokenIssuerPort;
+import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
+import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
+import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
+import it.unibo.hermes.gateway.domain.model.UserAccount;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Service managing user account registration and authentication.
+ * Service managing user account registration and login.
  */
 @Service
 public class AuthService implements AuthPort {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtProvider jwtProvider;
+    private final UserAccountPort userAccounts;
+    private final PasswordHasherPort passwordHasher;
+    private final TokenIssuerPort tokenIssuer;
 
     /**
      * Creates the authentication service.
      *
-     * @param userRepository  the repository managing user entity persistence
-     * @param passwordEncoder the password encoder used to hash and verify credentials
-     * @param jwtProvider     the provider generating signed JSON Web Tokens
+     * @param userAccounts   the port persisting user accounts
+     * @param passwordHasher the port hashing and verifying passwords
+     * @param tokenIssuer    the port issuing access tokens
      */
-    public AuthService(UserRepository userRepository,
-                       PasswordEncoder passwordEncoder,
-                       JwtProvider jwtProvider) {
-        this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtProvider = jwtProvider;
+    public AuthService(UserAccountPort userAccounts,
+                       PasswordHasherPort passwordHasher,
+                       TokenIssuerPort tokenIssuer) {
+        this.userAccounts = userAccounts;
+        this.passwordHasher = passwordHasher;
+        this.tokenIssuer = tokenIssuer;
     }
 
-    /**
-     * Registers a new user account with a securely hashed password.
-     *
-     * @param request the registration payload containing user credentials
-     * @throws IllegalArgumentException if the specified username is already registered
-     */
     @Transactional
     @Override
-    public void register(RegisterRequestDto request) {
-        if (userRepository.existsByUsername(request.username())) {
-            throw new IllegalArgumentException(
-                    "Username '" + request.username() + "' is already taken");
+    public void register(String username, String rawPassword) {
+        if (userAccounts.existsByUsername(username)) {
+            throw new UsernameAlreadyTakenException("Username '" + username + "' is already taken");
         }
-        String hash = passwordEncoder.encode(request.password());
-        userRepository.save(new User(request.username(), hash));
-        log.info("Registered new user '{}'", request.username());
+        String hash = passwordHasher.encode(rawPassword);
+        userAccounts.save(new UserAccount(username, hash));
+        log.info("Registered new user '{}'", username);
     }
 
-    /**
-     * Validates user credentials and generates a signed authentication token upon success.
-     *
-     * @param request the authentication payload containing username and password credentials
-     * @return an authentication response containing the signed token and token expiration duration
-     * @throws BadCredentialsException if the user account does not exist or the password verification fails
-     */
     @Transactional(readOnly = true)
     @Override
-    public AuthResponseDto login(LoginRequestDto request) {
-        User user = userRepository.findByUsername(request.username())
-                .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
+    public AuthResult login(String username, String rawPassword) {
+        UserAccount account = userAccounts.findByUsername(username)
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid credentials"));
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new BadCredentialsException("Invalid credentials");
+        if (!passwordHasher.matches(rawPassword, account.passwordHash())) {
+            throw new InvalidCredentialsException("Invalid credentials");
         }
 
-        String token = jwtProvider.generateToken(user.getUsername());
-        log.info("User '{}' authenticated", user.getUsername());
-        return new AuthResponseDto(token, user.getUsername(), jwtProvider.getExpirationMs());
+        String token = tokenIssuer.generateToken(account.username());
+        log.info("User '{}' authenticated", account.username());
+        return new AuthResult(token, account.username(), tokenIssuer.getExpirationMs());
     }
 }

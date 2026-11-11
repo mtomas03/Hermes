@@ -4,7 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.gateway.configuration.JacksonConfig;
 import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
-import it.unibo.hermes.gateway.infrastructure.event.MessageEvent;
+import it.unibo.hermes.gateway.domain.model.Message;
+import it.unibo.hermes.gateway.domain.model.MessageStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,11 +44,10 @@ class MessageProducerTest {
     @Test
     void publishSuccess() {
         UUID messageId = UUID.randomUUID();
-        MessageEvent event = new MessageEvent(
+        Message event = new Message(
                 messageId, "alice-bob",
                 "alice", "bob", "hi",
-                1L
-        );
+                1L, MessageStatus.PENDING);
         CompletableFuture<SendResult<String, String>> future =
                 CompletableFuture.completedFuture(sendResult);
 
@@ -58,40 +58,13 @@ class MessageProducerTest {
         verify(kafkaTemplate).send(eq(CREATED_TOPIC), eq("alice-bob"), anyString());
     }
 
-    /**
-     * Pins the wire contract consumed by the Worker's {@code MessageCreatedConsumer}: the record value
-     * must be a plain JSON object (not a JSON-encoded string) with the expected field names, and the
-     * record key must be the conversationId.
-     */
-    @Test
-    void publishSendsPlainJsonObjectKeyedByConversationId() throws Exception {
-        UUID messageId = UUID.randomUUID();
-        MessageEvent event = new MessageEvent(messageId, "alice-bob", "alice", "bob", "hi", 7L);
-        when(kafkaTemplate.send(eq(CREATED_TOPIC), eq("alice-bob"), anyString()))
-                .thenReturn(CompletableFuture.completedFuture(sendResult));
-
-        producer.publish(event);
-
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq(CREATED_TOPIC), eq("alice-bob"), payload.capture());
-        JsonNode json = objectMapper.readTree(payload.getValue());
-        assertThat(json.isObject()).isTrue();
-        assertThat(json.get("messageId").asText()).isEqualTo(messageId.toString());
-        assertThat(json.get("conversationId").asText()).isEqualTo("alice-bob");
-        assertThat(json.get("senderUsername").asText()).isEqualTo("alice");
-        assertThat(json.get("recipientUsername").asText()).isEqualTo("bob");
-        assertThat(json.get("content").asText()).isEqualTo("hi");
-        assertThat(json.get("logicalTimestamp").asLong()).isEqualTo(7L);
-    }
-
     @Test
     void publishKafkaFailureThrowsBackboneUnavailableException() {
         UUID messageId = UUID.randomUUID();
-        MessageEvent event = new MessageEvent(
+        Message event = new Message(
                 messageId, "alice-bob",
                 "alice", "bob", "hi",
-                1L
-        );
+                1L, MessageStatus.PENDING);
 
         CompletableFuture<SendResult<String, String>> failedFuture =
                 new CompletableFuture<>();

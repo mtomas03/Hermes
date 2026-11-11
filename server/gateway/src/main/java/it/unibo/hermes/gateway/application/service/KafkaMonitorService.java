@@ -1,10 +1,10 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SystemMessageDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket.WebSocketSessionRegistry;
+import it.unibo.hermes.gateway.application.port.secondary.BackboneHealthPort;
+import it.unibo.hermes.gateway.application.port.secondary.ClientNotifierPort;
+import it.unibo.hermes.gateway.application.port.secondary.ConnectedClientsPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -18,9 +18,9 @@ public class KafkaMonitorService {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaMonitorService.class);
 
-    private final KafkaHealthProbe kafkaHealthProbe;
-    private final WebSocketSessionRegistry registry;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final BackboneHealthPort kafkaHealthProbe;
+    private final ConnectedClientsPort registry;
+    private final ClientNotifierPort clientNotifier;
 
     /**
      * Shared atomic status flag indicating Kafka reachability.
@@ -30,16 +30,16 @@ public class KafkaMonitorService {
     /**
      * Creates the Kafka monitoring service.
      *
-     * @param kafkaHealthProbe  the probe executing broker connectivity health checks
-     * @param registry          the registry tracking users currently connected on this instance
-     * @param messagingTemplate the template used to push control frames to connected users
+     * @param kafkaHealthProbe the probe executing broker connectivity health checks
+     * @param registry         the registry tracking users currently connected on this instance
+     * @param clientNotifier   the port used to push control requests to connected users
      */
-    public KafkaMonitorService(KafkaHealthProbe kafkaHealthProbe,
-                               WebSocketSessionRegistry registry,
-                               SimpMessagingTemplate messagingTemplate) {
+    public KafkaMonitorService(BackboneHealthPort kafkaHealthProbe,
+                               ConnectedClientsPort registry,
+                               ClientNotifierPort clientNotifier) {
         this.kafkaHealthProbe = kafkaHealthProbe;
         this.registry = registry;
-        this.messagingTemplate = messagingTemplate;
+        this.clientNotifier = clientNotifier;
     }
 
     /**
@@ -78,11 +78,9 @@ public class KafkaMonitorService {
      * remains consistent with server state before real-time streaming resumes.
      */
     private void forceReconnectAll() {
-        SystemMessageDto msg = new SystemMessageDto("FORCE_RECONNECT", "BACKBONE_RECOVERED");
-
         for (String username : registry.allUsernames()) {
             try {
-                messagingTemplate.convertAndSendToUser(username, "/queue/system", msg);
+                clientNotifier.requestReconnect(username, "BACKBONE_RECOVERED");
             } catch (Exception e) {
                 log.warn("Could not send FORCE_RECONNECT to '{}': {}", username, e.getMessage());
             }

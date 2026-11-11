@@ -1,5 +1,9 @@
-package it.unibo.hermes.gateway.domain.exception;
+package it.unibo.hermes.gateway.infrastructure.adapter.primary.web;
 
+import it.unibo.hermes.gateway.domain.exception.ConversationAccessDeniedException;
+import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
+import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.exception.UserNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -69,8 +73,8 @@ public class GlobalExceptionHandler {
      * @param ex the bad credentials exception
      * @return a problem detail response with status 401 Unauthorized
      */
-    @ExceptionHandler(BadCredentialsException.class)
-    public ProblemDetail handleBadCredentials(BadCredentialsException ex) {
+    @ExceptionHandler({BadCredentialsException.class, InvalidCredentialsException.class})
+    public ProblemDetail handleBadCredentials(RuntimeException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED);
         pd.setTitle("Authentication failed");
         pd.setDetail("Invalid username or password");
@@ -83,8 +87,8 @@ public class GlobalExceptionHandler {
      * @param ex the access denied exception
      * @return a problem detail response with status 403 Forbidden
      */
-    @ExceptionHandler(AccessDeniedException.class)
-    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+    @ExceptionHandler({AccessDeniedException.class, ConversationAccessDeniedException.class})
+    public ProblemDetail handleAccessDenied(RuntimeException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
         pd.setTitle("Access denied");
         pd.setDetail(ex.getMessage());
@@ -97,6 +101,14 @@ public class GlobalExceptionHandler {
      * @param ex the illegal argument exception
      * @return a problem detail response with status 400 Bad Request
      */
+    @ExceptionHandler(UserNotFoundException.class)
+    public ProblemDetail handleUserNotFound(UserNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);

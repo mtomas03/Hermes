@@ -1,6 +1,10 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence;
 
+import it.unibo.hermes.gateway.application.port.secondary.ConversationStorePort;
+import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.model.Conversation;
+import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.cassandra.ConversationByUserRepository;
@@ -16,73 +20,77 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /**
- * Cassandra adapter for message and conversation persistence and retrieval.
+ * Secondary adapter implementing {@link ConversationStorePort} and {@link MessageStorePort} on top of Cassandra
+ * by providing persistence and retrieval methods for conversations and messages.
  */
 @Component
-public class CassandraAdapter {
+public class CassandraAdapter implements ConversationStorePort, MessageStorePort {
 
     private static final Logger log = LoggerFactory.getLogger(CassandraAdapter.class);
 
+    /**
+     * CQL statement to insert a message into the messages_by_conversation table, if it does not already exist.
+     */
     private static final String BY_CONVERSATION_INSERT =
             "INSERT INTO messages_by_conversation (conversation_id, logical_timestamp, message_id, "
                     + "sender_username, recipient_username, content, delivery_status) "
                     + "VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS";
+
+    /**
+     * CQL statement to insert a message into the message_by_id table, if it does not already exist.
+     */
     private static final String BY_ID_INSERT =
             "INSERT INTO message_by_id (message_id, conversation_id, sender_username, recipient_username, "
                     + "content, logical_timestamp, delivery_status) "
                     + "VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS";
 
-    private final MessageByConversationRepository messageByConversationRepository;
+    private final MessageByConversationRepository messageRepository;
     private final ConversationByUserRepository conversationByUserRepository;
     private final CassandraOperations cassandraOperations;
 
     public CassandraAdapter(
-            MessageByConversationRepository messageByConversationRepository,
+            MessageByConversationRepository messageRepository,
             ConversationByUserRepository conversationByUserRepository,
             CassandraOperations cassandraOperations) {
-        this.messageByConversationRepository = messageByConversationRepository;
+        this.messageRepository = messageRepository;
         this.conversationByUserRepository = conversationByUserRepository;
         this.cassandraOperations = cassandraOperations;
     }
 
-    /**
-     * Retrieves all conversations associated with a given user from Cassandra.
-     *
-     * @param username the username of the requesting user
-     * @return list of ConversationByUser entities
-     */
-    public List<ConversationByUser> findConversationsByUsername(String username) {
-        return conversationByUserRepository.findByUsername(username);
+    private static Message toDomain(MessageByConversation m) {
+        return new Message(
+                m.getMessageId(),
+                m.getConversationId(),
+                m.getSenderUsername(),
+                m.getRecipientUsername(),
+                m.getContent(),
+                m.getLogicalTimestamp(),
+                m.getDeliveryStatus());
     }
 
-    /**
-     * Checks whether a user is an authorised participant of a conversation in Cassandra.
-     *
-     * @param username       the username to verify
-     * @param conversationId the conversation identifier
-     * @return {@code true} if the user is a participant, {@code false} if the user is not
-     * @throws PersistenceUnavailableException if Cassandra is unreachable or timed out
-     */
+    @Override
+    public List<Conversation> findByUsername(String username) {
+        return conversationByUserRepository.findByUsername(username).stream()
+                .map(c -> new Conversation(c.getConversationId(), username, c.getOtherParticipant()))
+                .toList();
+    }
+
+    @Override
     public boolean isParticipant(String username, String conversationId) {
         return readOrUnavailable(
                 () -> conversationByUserRepository.existsByUsernameAndConversationId(username, conversationId),
                 "participant validation for user '" + username + "' in '" + conversationId + "'");
     }
 
-    /**
-     * A message is persisted during the gateway's fallback path (when Kafka is unavailable),
-     * so that the same persistent invariants apply as in the worker's path.
-     *
-     * @param messageByConversation the message entity to be persisted
-     */
-    public void saveFallback(MessageByConversation messageByConversation) {
-        String sender = messageByConversation.getSenderUsername();
-        String recipient = messageByConversation.getRecipientUsername();
-        String conversationId = messageByConversation.getConversationId();
-        var messageId = messageByConversation.getMessageId();
-        long logicalTimestamp = messageByConversation.getLogicalTimestamp();
-        String content = messageByConversation.getContent();
-        String status = messageByConversation.getDeliveryStatus().name();
+    @Override
+    public void saveFallback(Message message) {
+        String sender = message.senderUsername();
+        String recipient = message.recipientUsername();
+        String conversationId = message.conversationId();
+        var messageId = message.messageId();
+        long logicalTimestamp = message.logicalTimestamp();
+        String content = message.content();
+        String status = message.status().name();
         var cql = cassandraOperations.getCqlOperations();
 
         cql.execute(BY_CONVERSATION_INSERT,
@@ -100,15 +108,12 @@ public class CassandraAdapter {
         }
     }
 
-    /**
-     * Retrieves all messages belonging to a conversation.
-     *
-     * @param conversationId the conversation identifier
-     * @return all messages in the conversation
-     */
-    public List<MessageByConversation> findAllMessages(String conversationId) {
+    @Override
+    public List<Message> findAllByConversation(String conversationId) {
         return readOrUnavailable(
-                () -> messageByConversationRepository.findAllByConversationId(conversationId),
+                () -> messageRepository.findAllByConversationId(conversationId).stream()
+                        .map(CassandraAdapter::toDomain)
+                        .toList(),
                 "full message read for conversation '" + conversationId + "'");
     }
 

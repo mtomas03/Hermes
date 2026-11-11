@@ -1,8 +1,8 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 
 import it.unibo.hermes.gateway.application.port.primary.SyncPort;
-import it.unibo.hermes.gateway.application.service.SyncService;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto;
+import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto.MessageDto;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -11,8 +11,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * REST controller for full conversation synchronisation.
+ * REST controller providing endpoints for conversation synchronisation.
  */
 @RestController
 @RequestMapping("/api/v1/sync")
@@ -21,28 +23,35 @@ public class SyncController {
     private final SyncPort syncPort;
 
     /**
-     * Constructs the synchronisation controller.
+     * Creates the synchronisation controller.
      *
-     * @param syncPort the inbound port executing message synchronisation logic
+     * @param syncPort the primary port providing conversation history
      */
-    public SyncController(SyncService syncPort) {
+    public SyncController(SyncPort syncPort) {
         this.syncPort = syncPort;
     }
 
     /**
-     * Returns the complete message history of the requested conversation
-     * for the authenticated participant.
+     * Returns the full message history of a conversation to one of its participants.
      *
-     * @param conversationId the ID of the conversation to synchronise
-     * @param user           the authenticated user making the request
-     * @return a ResponseEntity containing the SyncResponseDto with the full message history
+     * @param conversationId the conversation to synchronise
+     * @param user           the authenticated user
+     * @return the conversation history
      */
     @GetMapping("/{conversationId}")
     public ResponseEntity<SyncResponseDto> sync(
             @PathVariable String conversationId,
             @AuthenticationPrincipal UserDetails user) {
-
-        return ResponseEntity.ok(
-                syncPort.syncConversation(user.getUsername(), conversationId));
+        List<MessageDto> messages = syncPort.syncConversation(user.getUsername(), conversationId).stream()
+                .map(m -> new MessageDto(
+                        m.messageId().toString(),
+                        m.conversationId(),
+                        m.senderUsername(),
+                        m.recipientUsername(),
+                        m.content(),
+                        m.logicalTimestamp(),
+                        m.status().name()))
+                .toList();
+        return ResponseEntity.ok(new SyncResponseDto(conversationId, messages));
     }
 }

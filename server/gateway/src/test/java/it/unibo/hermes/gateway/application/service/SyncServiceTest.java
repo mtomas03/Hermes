@@ -1,15 +1,15 @@
 package it.unibo.hermes.gateway.application.service;
 
+import it.unibo.hermes.gateway.application.port.secondary.ConversationStorePort;
+import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.gateway.domain.exception.ConversationAccessDeniedException;
+import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.domain.model.MessageStatus;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.CassandraAdapter;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.AccessDeniedException;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,67 +23,41 @@ import static org.mockito.Mockito.*;
 class SyncServiceTest {
 
     @Mock
-    private CassandraAdapter cassandraAdapter;
+    private ConversationStorePort conversationStore;
+    @Mock
+    private MessageStorePort messageStore;
 
     private SyncService syncService;
 
     @BeforeEach
     void setUp() {
-        syncService = new SyncService(cassandraAdapter);
+        syncService = new SyncService(conversationStore, messageStore);
     }
 
     @Test
     void shouldRejectSyncForNonParticipant() {
-        when(cassandraAdapter.isParticipant("carol", "alice-bob")).thenReturn(false);
+        when(conversationStore.isParticipant("carol", "alice-bob")).thenReturn(false);
 
         assertThatThrownBy(() -> syncService.syncConversation("carol", "alice-bob"))
-                .isInstanceOf(AccessDeniedException.class)
+                .isInstanceOf(ConversationAccessDeniedException.class)
                 .hasMessageContaining("User 'carol' is not a participant");
 
-        verify(cassandraAdapter, never()).findAllMessages(any());
+        verify(messageStore, never()).findAllByConversation(any());
     }
 
     @Test
     void shouldFetchFullHistoryForAuthorizedParticipant() {
-        when(cassandraAdapter.isParticipant("alice", "alice-bob")).thenReturn(true);
+        when(conversationStore.isParticipant("alice", "alice-bob")).thenReturn(true);
 
-        MessageByConversation msg1 = new MessageByConversation(
-                UUID.randomUUID(), "alice-bob", "alice", "bob",
+        Message msg1 = new Message(UUID.randomUUID(), "alice-bob", "alice", "bob",
                 "Hello Bob!", 1L, MessageStatus.DELIVERED);
-        MessageByConversation msg2 = new MessageByConversation(
-                UUID.randomUUID(), "alice-bob", "bob", "alice",
+        Message msg2 = new Message(UUID.randomUUID(), "alice-bob", "bob", "alice",
                 "Hi Alice!", 2L, MessageStatus.DELIVERED);
+        when(messageStore.findAllByConversation("alice-bob")).thenReturn(List.of(msg1, msg2));
 
-        when(cassandraAdapter.findAllMessages("alice-bob"))
-                .thenReturn(List.of(msg1, msg2));
+        List<Message> response = syncService.syncConversation("alice", "alice-bob");
 
-        SyncResponseDto response = syncService.syncConversation("alice", "alice-bob");
-
-        assertThat(response.conversationId()).isEqualTo("alice-bob");
-        assertThat(response.messages()).hasSize(2);
-        verify(cassandraAdapter).findAllMessages("alice-bob");
-    }
-
-    @Test
-    void shouldMapMessageFieldsIntoResponseDto() {
-        when(cassandraAdapter.isParticipant("alice", "alice-bob")).thenReturn(true);
-        UUID messageId = UUID.randomUUID();
-        MessageByConversation msg = new MessageByConversation(
-                messageId,
-                "alice-bob", "alice", "bob",
-                "hi", 2L, MessageStatus.STORED);
-        when(cassandraAdapter.findAllMessages("alice-bob")).thenReturn(List.of(msg));
-
-        SyncResponseDto response = syncService.syncConversation("alice", "alice-bob");
-
-        assertThat(response.messages()).hasSize(1);
-        SyncResponseDto.MessageDto dto = response.messages().getFirst();
-        assertThat(dto.messageId()).isEqualTo(messageId.toString());
-        assertThat(dto.conversationId()).isEqualTo("alice-bob");
-        assertThat(dto.senderUsername()).isEqualTo("alice");
-        assertThat(dto.recipientUsername()).isEqualTo("bob");
-        assertThat(dto.content()).isEqualTo("hi");
-        assertThat(dto.logicalTimestamp()).isEqualTo(2L);
-        assertThat(dto.messageStatus()).isEqualTo("STORED");
+        assertThat(response).containsExactly(msg1, msg2);
+        verify(messageStore).findAllByConversation("alice-bob");
     }
 }

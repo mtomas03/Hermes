@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket;
+package it.unibo.hermes.gateway.infrastructure.adapter.secondary.session;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,9 +1,8 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket;
 
-import it.unibo.hermes.gateway.application.service.PresenceService;
+import it.unibo.hermes.gateway.application.port.primary.SessionLifecyclePort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
@@ -12,7 +11,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import java.security.Principal;
 
 /**
- * Drives user presence tracking from Spring's STOMP session lifecycle events.
+ * Translates Spring's STOMP session lifecycle events into {@link SessionLifecyclePort} calls.
  *
  * <p> {@link SessionConnectedEvent} fires once the STOMP CONNECT handshake completes
  * (the session is fully established) and {@link SessionDisconnectEvent} fires when
@@ -23,21 +22,15 @@ public class PresenceEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(PresenceEventListener.class);
 
-    private final WebSocketSessionRegistry registry;
-    private final PresenceService presenceService;
-
-    @Value("${hermes.gateway.instance-id:gateway-1}")
-    private String gatewayInstanceId;
+    private final SessionLifecyclePort sessionLifecycle;
 
     /**
      * Creates the presence event listener.
      *
-     * @param registry        the registry tracking currently connected usernames on this instance
-     * @param presenceService the service updating user online presence states
+     * @param sessionLifecycle the primary port tracking client sessions
      */
-    public PresenceEventListener(WebSocketSessionRegistry registry, PresenceService presenceService) {
-        this.registry = registry;
-        this.presenceService = presenceService;
+    public PresenceEventListener(SessionLifecyclePort sessionLifecycle) {
+        this.sessionLifecycle = sessionLifecycle;
     }
 
     /**
@@ -52,8 +45,7 @@ public class PresenceEventListener {
             log.warn("SessionConnectedEvent with no authenticated principal - ignoring");
             return;
         }
-        registry.register(username);
-        presenceService.setOnline(username, gatewayInstanceId);
+        sessionLifecycle.clientConnected(username);
         log.info("STOMP session established for user '{}'", username);
     }
 
@@ -68,8 +60,7 @@ public class PresenceEventListener {
         if (username == null) {
             return;
         }
-        registry.unregister(username);
-        presenceService.setOffline(username, gatewayInstanceId);
+        sessionLifecycle.clientDisconnected(username);
         log.info("STOMP session closed for user '{}' - status: {}", username, event.getCloseStatus());
     }
 

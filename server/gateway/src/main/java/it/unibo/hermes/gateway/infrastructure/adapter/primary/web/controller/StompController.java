@@ -1,15 +1,15 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 
+import it.unibo.hermes.gateway.application.model.SendMessageCommand;
+import it.unibo.hermes.gateway.application.port.primary.AcknowledgementPort;
 import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
-import it.unibo.hermes.gateway.application.service.InboundMessageService;
+import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AckDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.DeliveryAckDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.ErrorDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.MessageToGatewayDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.producer.MessageAckProducer;
-import it.unibo.hermes.gateway.infrastructure.event.MessageAckEvent;
-import it.unibo.hermes.gateway.infrastructure.event.MessageEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
@@ -30,42 +30,22 @@ public class StompController {
     private static final Logger log = LoggerFactory.getLogger(StompController.class);
 
     private final InboundMessagePort inboundMessagePort;
-    private final MessageAckProducer messageAckProducer;
+    private final AcknowledgementPort acknowledgementPort;
     private final SimpMessagingTemplate messagingTemplate;
 
     /**
      * Creates the STOMP controller.
      *
-     * @param inboundMessagePort the inbound port publishing accepted messages to Kafka/Cassandra
-     * @param messageAckProducer the producer forwarding client ACK events to Kafka
-     * @param messagingTemplate  the template used to push acks/errors back to the sending user
+     * @param inboundMessagePort  the primary port accepting new messages
+     * @param acknowledgementPort the primary port recording recipient acknowledgements
+     * @param messagingTemplate   the template used to push acks/errors back to the sending user
      */
-    public StompController(InboundMessageService inboundMessagePort,
-                           MessageAckProducer messageAckProducer,
+    public StompController(InboundMessagePort inboundMessagePort,
+                           AcknowledgementPort acknowledgementPort,
                            SimpMessagingTemplate messagingTemplate) {
         this.inboundMessagePort = inboundMessagePort;
-        this.messageAckProducer = messageAckProducer;
+        this.acknowledgementPort = acknowledgementPort;
         this.messagingTemplate = messagingTemplate;
-    }
-
-    /**
-     * Checks whether the given conversation ID is canonical
-     * for the given sender and recipient.
-     *
-     * @param conversationId the conversation ID to check
-     * @param sender         the sender's username
-     * @param recipient      the recipient's username
-     * @return true if the conversation ID is canonical, false otherwise
-     */
-    public boolean isCanonicalConversationId(
-            String conversationId, String sender, String recipient) {
-        if (conversationId == null) {
-            return false;
-        }
-        String a = sender.trim().toLowerCase();
-        String b = recipient.trim().toLowerCase();
-        String expected = a.compareTo(b) <= 0 ? a + "-" + b : b + "-" + a;
-        return expected.equals(conversationId);
     }
 
     /**
@@ -82,38 +62,18 @@ public class StompController {
     public void sendMessage(@Payload MessageToGatewayDto payload, Principal principal) {
         String sender = principal.getName();
 
-        if (payload.recipientUsername() == null || payload.recipientUsername().isBlank()) {
-            sendError(
-                    sender, payload.messageId(),
-                    "MISSING_RECIPIENT", "Field 'recipientUsername' is required");
-            return;
-        }
-        if (payload.content() == null || payload.content().isBlank()) {
-            sendError(
-                    sender, payload.messageId(),
-                    "MISSING_CONTENT", "Field 'content' is required");
-            return;
-        }
-        if (sender.equals(payload.recipientUsername())) {
-            sendError(
-                    sender, payload.messageId(),
-                    "SELF_SEND", "Cannot send a message to yourself");
-            return;
-        }
-
-        if (!isCanonicalConversationId(payload.conversationId(), sender, payload.recipientUsername())) {
-            log.warn("Rejected message from '{}': conversationId '{}' does not match the participants",
-                    sender, payload.conversationId());
-            sendError(
-                    sender, payload.messageId(),
-                    "INVALID_CONVERSATION", "Field 'conversationId' does not match the conversation participants");
-            return;
-        }
-
         try {
-            MessageEvent accepted = inboundMessagePort.publish(payload, sender);
+            Message accepted = inboundMessagePort.publish(new SendMessageCommand(
+                    payload.messageId(),
+                    payload.conversationId(),
+                    sender,
+                    payload.recipientUsername(),
+                    payload.content(),
+                    payload.logicalTimestamp()));
             messagingTemplate.convertAndSendToUser(sender, "/queue/acks",
                     new AckDto(accepted.messageId().toString(), "ACCEPTED"));
+        } catch (InvalidMessageException e) {
+            sendError(sender, payload.messageId(), e.code(), e.getMessage());
         } catch (PersistenceUnavailableException e) {
             log.error("Message rejected - persistence unavailable: {}", e.getMessage());
             sendError(sender, payload.messageId(), "DELIVERY_REJECTED",
@@ -148,7 +108,7 @@ public class StompController {
 
         log.debug("Delivery ACK received from recipient '{}' for message {}", recipient, payload.messageId());
 
-        messageAckProducer.publishAck(new MessageAckEvent(payload.messageId(), recipient));
+        acknowledgementPort.acknowledge(payload.messageId(), recipient);
     }
 
     /**

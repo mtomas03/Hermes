@@ -1,19 +1,19 @@
 package it.unibo.hermes.gateway.application.port.primary;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.ConversationDto;
+import it.unibo.hermes.gateway.domain.model.Conversation;
 
 import java.util.List;
 
 /**
- * Port interface for managing conversations.
+ * Primary port interface for managing conversations.
  */
 public interface ConversationPort {
 
     /**
-     * Retrieves a list of conversations for the specified user.
+     * Retrieves the conversations of the specified user.
      *
      * @param currentUsername the username of the current user
-     * @return a list of ConversationDto representing the user's conversations
+     * @return the user's conversations
      */
-    List<ConversationDto> getUserConversations(String currentUsername);
+    List<Conversation> getUserConversations(String currentUsername);
 }

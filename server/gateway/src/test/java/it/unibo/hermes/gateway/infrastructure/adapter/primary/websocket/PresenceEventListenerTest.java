@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket;
 
-import it.unibo.hermes.gateway.application.service.PresenceService;
+import it.unibo.hermes.gateway.application.port.primary.SessionLifecyclePort;
 import it.unibo.hermes.gateway.infrastructure.security.StompPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,7 +11,6 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
@@ -23,16 +22,13 @@ import static org.springframework.web.socket.CloseStatus.NORMAL;
 class PresenceEventListenerTest {
 
     @Mock
-    private WebSocketSessionRegistry registry;
-    @Mock
-    private PresenceService presenceService;
+    private SessionLifecyclePort sessionLifecycle;
 
     private PresenceEventListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new PresenceEventListener(registry, presenceService);
-        ReflectionTestUtils.setField(listener, "gatewayInstanceId", "gateway-1");
+        listener = new PresenceEventListener(sessionLifecycle);
     }
 
     private Message<byte[]> authenticatedMessage() {
@@ -44,14 +40,13 @@ class PresenceEventListenerTest {
     }
 
     @Test
-    void shouldRegisterAndMarkOnlineOnSessionConnected() {
+    void shouldReportClientConnectedOnSessionConnected() {
         SessionConnectedEvent event = new SessionConnectedEvent(this, authenticatedMessage(),
                 new StompPrincipal("alice"));
 
         listener.onSessionConnected(event);
 
-        verify(registry).register("alice");
-        verify(presenceService).setOnline("alice", "gateway-1");
+        verify(sessionLifecycle).clientConnected("alice");
     }
 
     @Test
@@ -60,18 +55,17 @@ class PresenceEventListenerTest {
 
         listener.onSessionConnected(event);
 
-        verifyNoInteractions(registry, presenceService);
+        verifyNoInteractions(sessionLifecycle);
     }
 
     @Test
-    void shouldUnregisterAndMarkOfflineOnSessionDisconnect() {
+    void shouldReportClientDisconnectedOnSessionDisconnect() {
         SessionDisconnectEvent event = new SessionDisconnectEvent(this, authenticatedMessage(),
                 "session-1", NORMAL, new StompPrincipal("alice"));
 
         listener.onSessionDisconnect(event);
 
-        verify(registry).unregister("alice");
-        verify(presenceService).setOffline("alice", "gateway-1");
+        verify(sessionLifecycle).clientDisconnected("alice");
     }
 
     @Test
@@ -81,6 +75,6 @@ class PresenceEventListenerTest {
 
         listener.onSessionDisconnect(event);
 
-        verifyNoInteractions(registry, presenceService);
+        verifyNoInteractions(sessionLifecycle);
     }
 }
