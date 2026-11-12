@@ -36,11 +36,9 @@ class SyncServiceTest {
 
     @Test
     void shouldRejectSyncForNonParticipant() {
-        when(conversationStore.isParticipant("carol", "alice-bob")).thenReturn(false);
-
-        assertThatThrownBy(() -> syncService.syncConversation("carol", "alice-bob"))
+        assertThatThrownBy(() -> syncService.syncConversation("charlie", "alice-bob"))
                 .isInstanceOf(ConversationAccessDeniedException.class)
-                .hasMessageContaining("User 'carol' is not a participant");
+                .hasMessageContaining("User 'charlie' is not a participant");
 
         verify(messageStore, never()).findAllByConversation(any());
     }
@@ -59,5 +57,34 @@ class SyncServiceTest {
 
         assertThat(response).containsExactly(msg1, msg2);
         verify(messageStore).findAllByConversation("alice-bob");
+    }
+
+    @Test
+    void shouldRejectUserNamedInTheIdWhenNoMembershipRowExists() {
+        when(conversationStore.isParticipant("alice", "alice-bob")).thenReturn(false);
+
+        assertThatThrownBy(() -> syncService.syncConversation("alice", "alice-bob"))
+                .isInstanceOf(ConversationAccessDeniedException.class);
+        verify(messageStore, never()).findAllByConversation(any());
+    }
+
+    @Test
+    void shouldRejectMembershipRowForAConversationThatDoesNotNameTheUser() {
+        lenient().when(conversationStore.isParticipant("charlie", "alice-bob")).thenReturn(true);
+
+        assertThatThrownBy(() -> syncService.syncConversation("charlie", "alice-bob"))
+                .isInstanceOf(ConversationAccessDeniedException.class);
+        verify(messageStore, never()).findAllByConversation(any());
+    }
+
+    @Test
+    void shouldRejectAmbiguousOrMalformedConversationIds() {
+        lenient().when(conversationStore.isParticipant(any(), any())).thenReturn(true);
+
+        assertThatThrownBy(() -> syncService.syncConversation("alice", "alice-b-c"))
+                .isInstanceOf(ConversationAccessDeniedException.class);
+        assertThatThrownBy(() -> syncService.syncConversation("alice", "alice"))
+                .isInstanceOf(ConversationAccessDeniedException.class);
+        verify(messageStore, never()).findAllByConversation(any());
     }
 }

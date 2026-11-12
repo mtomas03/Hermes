@@ -8,6 +8,7 @@ import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
 import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
 import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
 import it.unibo.hermes.gateway.domain.model.UserAccount;
+import it.unibo.hermes.gateway.domain.model.Username;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -43,12 +44,13 @@ public class AuthService implements AuthPort {
     @Transactional
     @Override
     public void register(String username, String rawPassword) {
-        if (userAccounts.existsByUsername(username)) {
-            throw new UsernameAlreadyTakenException("Username '" + username + "' is already taken");
+        Username canonicalUsername = new Username(username);
+        if (userAccounts.existsByUsername(canonicalUsername.value())) {
+            throw new UsernameAlreadyTakenException("Username '" + canonicalUsername.value() + "' is already taken");
         }
         String hash = passwordHasher.encode(rawPassword);
-        userAccounts.save(new UserAccount(username, hash));
-        log.info("Registered new user '{}'", username);
+        userAccounts.save(new UserAccount(canonicalUsername.value(), hash));
+        log.info("Registered new user '{}'", canonicalUsername.value());
     }
 
     @Transactional(readOnly = true)

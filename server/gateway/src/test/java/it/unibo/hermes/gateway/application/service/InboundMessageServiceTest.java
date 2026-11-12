@@ -3,6 +3,7 @@ package it.unibo.hermes.gateway.application.service;
 import it.unibo.hermes.gateway.application.model.SendMessageCommand;
 import it.unibo.hermes.gateway.application.port.secondary.MessagePublisherPort;
 import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
 import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
@@ -32,11 +33,15 @@ class InboundMessageServiceTest {
     @Mock
     private MessageStorePort messageStore;
 
+    @Mock
+    private UserAccountPort userAccounts;
+
     private InboundMessageService service;
 
     @BeforeEach
     void setUp() {
-        service = new InboundMessageService(messagePublisher, messageStore);
+        service = new InboundMessageService(messagePublisher, messageStore, userAccounts);
+        lenient().when(userAccounts.existsByUsername("bob")).thenReturn(true);
         ReflectionTestUtils.setField(service, "maxAttempts", 2);
         ReflectionTestUtils.setField(service, "initialBackoffMs", 1L);
         ReflectionTestUtils.setField(service, "backoffMultiplier", 1.0);
@@ -158,12 +163,66 @@ class InboundMessageServiceTest {
     }
 
     @Test
-    void shouldAcceptConversationIdRegardlessOfRecipientCaseAndWhitespace() {
+    void shouldNormaliseRecipientCaseAndWhitespaceAndStoreTheDerivedConversationId() {
         doNothing().when(messagePublisher).publish(any(Message.class));
 
         Message accepted = service.publish(command(" Bob ", "hi", "alice-bob"));
 
-        assertThat(accepted).isNotNull();
+        assertThat(accepted.recipientUsername()).isEqualTo("bob");
+        assertThat(accepted.conversationId()).isEqualTo("alice-bob");
+    }
+
+    @Test
+    void shouldRejectRecipientContainingTheConversationSeparator() {
+        assertThatThrownBy(() -> service.publish(command("b-c", "hi", "alice-b-c")))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("INVALID_RECIPIENT"));
+        verifyNoInteractions(messagePublisher, messageStore, userAccounts);
+    }
+
+    @Test
+    void shouldRejectRecipientOutsideTheCanonicalCharset() {
+        assertThatThrownBy(() -> service.publish(command("bob!", "hi", "alice-bob!")))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("INVALID_RECIPIENT"));
+        verifyNoInteractions(messagePublisher, messageStore);
+    }
+
+    @Test
+    void shouldTreatCaseVariantOfOwnUsernameAsSelfSend() {
+        assertThatThrownBy(() -> service.publish(command("ALICE", "hi", "alice-alice")))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("SELF_SEND"));
+    }
+
+    @Test
+    void shouldRejectMessageToNonexistentRecipient() {
+        when(userAccounts.existsByUsername("ghost")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.publish(command("ghost", "hi", "alice-ghost")))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("UNKNOWN_RECIPIENT"));
+        verifyNoInteractions(messagePublisher, messageStore);
+    }
+
+    @Test
+    void shouldAcceptMessageWhenAccountStoreIsUnavailable() {
+        when(userAccounts.existsByUsername("charlie")).thenThrow(new RuntimeException("postgres down"));
+        doNothing().when(messagePublisher).publish(any(Message.class));
+
+        Message accepted = service.publish(command("charlie", "hi", "alice-charlie"));
+
+        assertThat(accepted.recipientUsername()).isEqualTo("charlie");
+    }
+
+    @Test
+    void shouldNotQueryTheAccountStoreAgainForARecipientAlreadySeenToExist() {
+        doNothing().when(messagePublisher).publish(any(Message.class));
+
+        service.publish(command());
+        service.publish(command());
+
+        verify(userAccounts, times(1)).existsByUsername("bob");
     }
 
     @Test

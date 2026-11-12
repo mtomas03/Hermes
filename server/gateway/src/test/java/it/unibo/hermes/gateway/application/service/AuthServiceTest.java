@@ -5,11 +5,14 @@ import it.unibo.hermes.gateway.application.port.secondary.PasswordHasherPort;
 import it.unibo.hermes.gateway.application.port.secondary.TokenIssuerPort;
 import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
 import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
+import it.unibo.hermes.gateway.domain.exception.InvalidUsernameException;
 import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
 import it.unibo.hermes.gateway.domain.model.UserAccount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -58,6 +61,21 @@ class AuthServiceTest {
                 .isInstanceOf(UsernameAlreadyTakenException.class)
                 .isInstanceOf(IllegalArgumentException.class);
         verify(userAccounts, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Alice", "al", "a-b", "alice bob", "alice!", "ALICE", " alice"})
+    void shouldRejectRegistrationOfNonCanonicalUsernames(String username) {
+        assertThatThrownBy(() -> authServiceImpl.register(username, "secret123"))
+                .isInstanceOf(InvalidUsernameException.class)
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(userAccounts);
+    }
+
+    @Test
+    void shouldRejectNullUsername() {
+        assertThatThrownBy(() -> authServiceImpl.register(null, "secret123"))
+                .isInstanceOf(InvalidUsernameException.class);
     }
 
     @Test
