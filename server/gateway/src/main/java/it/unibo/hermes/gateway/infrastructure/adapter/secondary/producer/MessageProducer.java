@@ -3,7 +3,6 @@ package it.unibo.hermes.gateway.infrastructure.adapter.secondary.producer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.gateway.application.port.secondary.MessagePublisherPort;
-import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.infrastructure.event.MessageEvent;
 import org.slf4j.Logger;

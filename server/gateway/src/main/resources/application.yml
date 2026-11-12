@@ -80,7 +80,7 @@ hermes:
       backoff-multiplier: 2.0
 
   presence:
-    ttl-seconds: ${PRESENCE_TTL:300} # 5min TTL on online keys
+    ttl-seconds: ${PRESENCE_TTL:90} # 3 missed heartbeats
 
 logging:
   level:

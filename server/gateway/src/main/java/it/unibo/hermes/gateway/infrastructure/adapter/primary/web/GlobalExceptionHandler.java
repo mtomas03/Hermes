@@ -1,10 +1,6 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.web;
 
-import it.unibo.hermes.gateway.domain.exception.ConversationAccessDeniedException;
-import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
-import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
-import it.unibo.hermes.gateway.domain.exception.UserNotFoundException;
-import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
+import it.unibo.hermes.gateway.domain.exception.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -19,10 +15,10 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.SQLNonTransientConnectionException;
 import java.sql.SQLRecoverableException;

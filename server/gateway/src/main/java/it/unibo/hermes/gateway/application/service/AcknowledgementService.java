@@ -36,7 +36,7 @@ public class AcknowledgementService implements AcknowledgementPort {
     /**
      * Creates the acknowledgement service.
      *
-     * @param ackPublisher the port publishing acknowledgements to the backbone
+     * @param ackPublisher    the port publishing acknowledgements to the backbone
      * @param backboneMonitor the monitor telling whether the backbone is reachable
      */
     public AcknowledgementService(AckPublisherPort ackPublisher, KafkaMonitorService backboneMonitor) {

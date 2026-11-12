@@ -106,7 +106,7 @@ class WebSocketSessionRegistryTest {
     @Test
     void concurrentConnectAndDisconnectNeverLoseALiveSession() throws Exception {
         registry.register("alice", "keeper");
-        try (ExecutorService pool = Executors.newFixedThreadPool(8);){
+        try (ExecutorService pool = Executors.newFixedThreadPool(8);) {
             for (int i = 0; i < 100; i++) {
                 String id = "s" + i;
                 pool.submit(() -> {

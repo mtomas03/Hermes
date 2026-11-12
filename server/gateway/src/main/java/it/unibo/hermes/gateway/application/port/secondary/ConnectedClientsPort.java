@@ -20,7 +20,7 @@ public interface ConnectedClientsPort {
     /**
      * Removes one STOMP session of a user.
      *
-     * @param username the authenticated user
+     * @param username  the authenticated user
      * @param sessionId the STOMP session identifier
      * @return true only if this call removed the user's last open session
      */

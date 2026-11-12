@@ -62,7 +62,7 @@ public final class ConversationIds {
      * @param conversationId the conversation identifier
      * @param username       a username to check
      * @return true if the identifier is well-formed and names the user as one of its two participants
-     *         false otherwise
+     * false otherwise
      */
     public static boolean isParticipant(String conversationId, String username) {
         if (username == null || conversationId == null) {

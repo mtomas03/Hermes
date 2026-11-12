@@ -46,8 +46,8 @@ class StompControllerTest {
     }
 
     private MessageToGatewayDto payload(String messageId) {
-        return new MessageToGatewayDto(messageId, "alice-bob", 
-                "alice", "bob", 
+        return new MessageToGatewayDto(messageId, "alice-bob",
+                "alice", "bob",
                 "hi", 1L);
     }
 
@@ -60,16 +60,16 @@ class StompControllerTest {
     @Test
     void validSendMessageShouldBePublishedAndAcknowledged() {
         UUID messageId = UUID.randomUUID();
-        Message accepted = new Message(messageId, "alice-bob", 
-                "alice", "bob", 
+        Message accepted = new Message(messageId, "alice-bob",
+                "alice", "bob",
                 "hi", 1L, MessageStatus.PENDING);
         when(inboundMessagePort.publish(any())).thenReturn(accepted);
 
         stompController.sendMessage(payload(messageId.toString()), ALICE);
 
         verify(inboundMessagePort).publish(new SendMessageCommand(
-                messageId.toString(), "alice-bob", 
-                "alice", "bob", 
+                messageId.toString(), "alice-bob",
+                "alice", "bob",
                 "hi", 1L));
 
         ArgumentCaptor<AckDto> ackCaptor = ArgumentCaptor.forClass(AckDto.class);
@@ -82,8 +82,8 @@ class StompControllerTest {
     void senderShouldAlwaysComeFromThePrincipalNotThePayload() {
         UUID messageId = UUID.randomUUID();
         when(inboundMessagePort.publish(any())).thenReturn(
-                new Message(messageId, "alice-bob", 
-                        "alice", "bob", 
+                new Message(messageId, "alice-bob",
+                        "alice", "bob",
                         "hi", 1L, MessageStatus.PENDING));
         MessageToGatewayDto forged = new MessageToGatewayDto(
                 messageId.toString(), "alice-bob",

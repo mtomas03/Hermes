@@ -5,7 +5,6 @@ import it.unibo.hermes.gateway.domain.exception.ConversationAccessDeniedExceptio
 import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.domain.model.MessageStatus;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

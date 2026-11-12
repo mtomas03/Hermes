@@ -8,7 +8,7 @@ public interface SessionLifecyclePort {
     /**
      * Records that a client session has been established.
      *
-     * @param username the authenticated username
+     * @param username  the authenticated username
      * @param sessionId the STOMP session identifier
      */
     void clientConnected(String username, String sessionId);
@@ -19,7 +19,7 @@ public interface SessionLifecyclePort {
      * <p> The user is reported offline only when no other session
      * of the same user is still active.
      *
-     * @param username the authenticated username
+     * @param username  the authenticated username
      * @param sessionId the STOMP session identifier
      */
     void clientDisconnected(String username, String sessionId);

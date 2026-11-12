@@ -1,7 +1,8 @@
 package it.unibo.hermes.gateway.application.port.secondary;
 
-import java.time.Duration;
 import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
+
+import java.time.Duration;
 
 /**
  * Secondary port interface for the publication of recipient acknowledgements to the message backbone.

@@ -42,7 +42,7 @@ public class KafkaMonitorService {
      * Tells whether Kafka is currently reachable.
      *
      * @return {@code true} if the backbone is reachable,
-     *         {@code false} otherwise
+     * {@code false} otherwise
      */
     public boolean isMessageBackboneAvailable() {
         return isMessageBackboneAvailable.get();
