@@ -67,6 +67,15 @@ class CassandraAdapterTest {
     }
 
     @Test
+    void conversationListingOutageIsReportedAsPersistenceUnavailableLikeTheOtherReads() {
+        when(conversationByUserRepository.findByUsername("alice"))
+                .thenThrow(new DataAccessResourceFailureException("no node available"));
+
+        assertThatThrownBy(() -> cassandraAdapter.findByUsername("alice"))
+                .isInstanceOf(PersistenceUnavailableException.class);
+    }
+
+    @Test
     void shouldCheckIfUserIsParticipant() {
         when(conversationByUserRepository.existsByUsernameAndConversationId(
                 "alice", "alice-bob")).thenReturn(true);

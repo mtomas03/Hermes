@@ -70,9 +70,12 @@ public class CassandraAdapter implements ConversationStorePort, MessageStorePort
 
     @Override
     public List<Conversation> findByUsername(String username) {
-        return conversationByUserRepository.findByUsername(username).stream()
-                .map(c -> new Conversation(c.getConversationId(), username, c.getOtherParticipant()))
-                .toList();
+        return readOrUnavailable(
+                () -> conversationByUserRepository.findByUsername(username).stream()
+                        .map(c -> new Conversation(
+                                c.getConversationId(), username, c.getOtherParticipant()))
+                        .toList(),
+                "conversation listing of '" + username + "'");
     }
 
     @Override
