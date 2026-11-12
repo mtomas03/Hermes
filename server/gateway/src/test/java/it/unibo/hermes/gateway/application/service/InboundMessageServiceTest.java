@@ -318,4 +318,16 @@ class InboundMessageServiceTest {
         verify(messagePublisher).publish(any(Message.class), timeout.capture());
         assertThat(timeout.getValue()).isLessThanOrEqualTo(Duration.ofMillis(500));
     }
+
+    @Test
+    void shouldReportAnIdConflictFromTheFallbackAsAClientErrorNotAsAStorageOutage() {
+        when(backboneMonitor.isMessageBackboneAvailable()).thenReturn(false);
+        doThrow(new InvalidMessageException("MESSAGE_ID_CONFLICT", "already used"))
+                .when(messageStore).saveFallback(any(Message.class));
+
+        assertThatThrownBy(() -> service.publish(command()))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code())
+                                .isEqualTo("MESSAGE_ID_CONFLICT"));
+    }
 }

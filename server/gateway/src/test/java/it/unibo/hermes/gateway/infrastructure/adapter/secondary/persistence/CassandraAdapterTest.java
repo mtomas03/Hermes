@@ -1,5 +1,6 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence;
 
+import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Conversation;
 import it.unibo.hermes.gateway.domain.model.Message;
@@ -24,6 +25,7 @@ import org.springframework.data.cassandra.core.CassandraOperations;
 import org.springframework.data.cassandra.core.cql.CqlOperations;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -100,23 +102,22 @@ class CassandraAdapterTest {
                 eq("bob"), eq("Fallback content"), eq(1L),
                 eq("STORED"));
         verify(messageByConversationRepository, never()).save(any());
+        verify(cqlOperations, never()).queryForList(anyString(), any(Object[].class));
     }
 
     @Test
-    void fallbackCreatesConversationIndexForBothParticipantsAndWritesMessageByIdLast() {
-        Message message = new Message(
-                UUID.randomUUID(),
-                "alice-bob", "alice", "bob",
-                "hi", 1L, MessageStatus.STORED);
+    void fallbackWritesTheAuthoritativeRowFirstThenTheProjectionThenTheMembership() {
+        Message message = fallbackMessage(UUID.randomUUID());
+        when(cqlOperations.execute(startsWith("INSERT"), any(Object[].class))).thenReturn(true);
 
         cassandraAdapter.saveFallback(message);
 
         ArgumentCaptor<ConversationByUser> indexes = ArgumentCaptor.forClass(ConversationByUser.class);
         InOrder order = inOrder(cqlOperations, conversationByUserRepository);
+        order.verify(cqlOperations).execute(startsWith("INSERT INTO message_by_id"), any(Object[].class));
         order.verify(cqlOperations).execute(startsWith("INSERT INTO messages_by_conversation"),
                 any(Object[].class));
         order.verify(conversationByUserRepository, times(2)).save(indexes.capture());
-        order.verify(cqlOperations).execute(startsWith("INSERT INTO message_by_id"), any(Object[].class));
 
         assertThat(indexes.getAllValues())
                 .extracting(ConversationByUser::getUsername,
@@ -128,42 +129,145 @@ class CassandraAdapterTest {
     }
 
     @Test
-    void fallbackOnAMessageTheWorkerAlreadyAdvancedIsARejectedInsertNotAnErrorAndNeverWritesStored() {
-        Message message = new Message(
-                UUID.randomUUID(), "alice-bob",
-                "alice", "bob",
-                "hi", 1L, MessageStatus.STORED);
-        // both conditional inserts are rejected: the rows exist
-        when(cqlOperations.execute(startsWith("INSERT"), any(Object[].class))).thenReturn(false);
+    void failureOfTheAuthoritativeWriteLeavesNoProjectionAndNoMembership() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenThrow(new DataAccessResourceFailureException("no node available"));
 
-        assertThatCode(() -> cassandraAdapter.saveFallback(message)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOf(DataAccessResourceFailureException.class);
 
-        // the only statements executed are the two conditional inserts
-        verify(cqlOperations, times(2)).execute(startsWith("INSERT"), any(Object[].class));
+        verify(cqlOperations, never()).execute(startsWith("INSERT INTO messages_by_conversation"),
+                any(Object[].class));
+        verifyNoInteractions(conversationByUserRepository);
+    }
+
+    @Test
+    void failureOfTheProjectionAfterTheAuthoritativeWriteIsPropagatedSoTheClientCanRetransmit() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(true);
+        when(cqlOperations.execute(startsWith("INSERT INTO messages_by_conversation"), any(Object[].class)))
+                .thenThrow(new DataAccessResourceFailureException("timeout"));
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOf(DataAccessResourceFailureException.class);
+
+        verifyNoInteractions(conversationByUserRepository);
+    }
+
+    @Test
+    void retransmissionOfAnIdenticalMessageCompletesTheMissingProjectionsWithTheAuthoritativeStatus() {
+        UUID id = UUID.randomUUID();
+        Message retransmitted = fallbackMessage(id);
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(false);
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class)))
+                .thenReturn(List.of(storedRow("hi", 1L, "DELIVERED")));
+        when(cqlOperations.execute(startsWith("INSERT INTO messages_by_conversation"), any(Object[].class)))
+                .thenReturn(true);
+
+        assertThatCode(() -> cassandraAdapter.saveFallback(retransmitted)).doesNotThrowAnyException();
+
+        // the projection has the status already reached by the message
+        verify(cqlOperations).execute(startsWith("INSERT INTO messages_by_conversation"),
+                eq("alice-bob"), eq(1L), eq(id),
+                eq("alice"), eq("bob"),
+                eq("hi"), eq("DELIVERED"));
+        verify(conversationByUserRepository, times(2)).save(any());
         verify(cqlOperations, never()).execute(startsWith("UPDATE"), any(Object[].class));
         verify(messageByConversationRepository, never()).save(any());
     }
 
     @Test
+    void retransmissionWithAlreadyPresentProjectionDoesNotCreateDuplicates() {
+        when(cqlOperations.execute(startsWith("INSERT"), any(Object[].class))).thenReturn(false);
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class)))
+                .thenReturn(List.of(storedRow("hi", 1L, "STORED")));
+
+        assertThatCode(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .doesNotThrowAnyException();
+
+        // conditional inserts only: an existing projection is left untouched
+        verify(cqlOperations, times(2)).execute(startsWith("INSERT"), any(Object[].class));
+        verify(cqlOperations, never()).execute(startsWith("UPDATE"), any(Object[].class));
+    }
+
+    @Test
+    void reusingAnIdWithDifferentContentIsRejectedAndWritesNothingElse() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(false);
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class)))
+                .thenReturn(List.of(storedRow("original", 1L, "STORED")));
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("MESSAGE_ID_CONFLICT"));
+
+        verify(cqlOperations, never()).execute(startsWith("INSERT INTO messages_by_conversation"),
+                any(Object[].class));
+        verifyNoInteractions(conversationByUserRepository);
+    }
+
+    @Test
+    void reusingAnIdWithADifferentTimestampIsRejectedInsteadOfCreatingASecondProjectionRow() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(false);
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class)))
+                .thenReturn(List.of(storedRow("hi", 99L, "STORED")));
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOfSatisfying(InvalidMessageException.class,
+                        e -> assertThat(e.code()).isEqualTo("MESSAGE_ID_CONFLICT"));
+
+        verify(cqlOperations, never()).execute(startsWith("INSERT INTO messages_by_conversation"),
+                any(Object[].class));
+    }
+
+    @Test
+    void reusingAnIdForADifferentParticipantPairIsRejected() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(false);
+        Map<String, Object> other = Map.of(
+                "conversation_id", "alice-charlie",
+                "sender_username", "alice",
+                "recipient_username", "charlie",
+                "content", "hi",
+                "logical_timestamp", 1L,
+                "delivery_status", "STORED");
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class))).thenReturn(List.of(other));
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOf(InvalidMessageException.class);
+    }
+
+    @Test
+    void anExistingRowThatCannotBeReadBackIsAnErrorNotASilentSuccess() {
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
+                .thenReturn(false);
+        when(cqlOperations.queryForList(startsWith("SELECT"), any(Object[].class))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> cassandraAdapter.saveFallback(fallbackMessage(UUID.randomUUID())))
+                .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(conversationByUserRepository);
+    }
+
+    @Test
     void fallbackPropagatesCassandraErrorsInsteadOfTreatingThemAsRejections() {
-        Message message = new Message(
-                UUID.randomUUID(), "alice-bob",
-                "alice", "bob",
-                "hi", 1L, MessageStatus.STORED);
-        when(cqlOperations.execute(startsWith("INSERT INTO messages_by_conversation"), any(Object[].class)))
+        Message message = fallbackMessage(UUID.randomUUID());
+        when(cqlOperations.execute(startsWith("INSERT INTO message_by_id"), any(Object[].class)))
                 .thenThrow(new DataAccessResourceFailureException("no node available"));
 
         assertThatThrownBy(() -> cassandraAdapter.saveFallback(message))
                 .isInstanceOf(DataAccessResourceFailureException.class);
-        verify(cqlOperations, never()).execute(startsWith("INSERT INTO message_by_id"), any(Object[].class));
+        verify(cqlOperations, never()).execute(startsWith("INSERT INTO messages_by_conversation"),
+                any(Object[].class));
     }
 
     @Test
     void isParticipantIsFalseOnlyWhenNoMembershipRecordExists() {
         when(conversationByUserRepository.existsByUsernameAndConversationId(
-                "carol", "alice-bob")).thenReturn(false);
+                "charlie", "alice-bob")).thenReturn(false);
 
-        assertThat(cassandraAdapter.isParticipant("carol", "alice-bob")).isFalse();
+        assertThat(cassandraAdapter.isParticipant("charlie", "alice-bob")).isFalse();
     }
 
     @Test
@@ -191,7 +295,8 @@ class CassandraAdapterTest {
         when(conversationByUserRepository.existsByUsernameAndConversationId(
                 "alice", "alice-bob")).thenThrow(bug);
 
-        assertThatThrownBy(() -> cassandraAdapter.isParticipant("alice", "alice-bob")).isSameAs(bug);
+        assertThatThrownBy(() -> cassandraAdapter.isParticipant("alice", "alice-bob"))
+                .isSameAs(bug);
     }
 
     @Test
@@ -211,5 +316,22 @@ class CassandraAdapterTest {
                         "alice", "bob",
                         "hi", 1L, MessageStatus.STORED));
         verify(messageByConversationRepository).findAllByConversationId(conversationId);
+    }
+
+    private Message fallbackMessage(UUID id) {
+        return new Message(
+                id, "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.STORED);
+    }
+
+    private Map<String, Object> storedRow(String content, long timestamp, String status) {
+        return Map.of(
+                "conversation_id", "alice-bob",
+                "sender_username", "alice",
+                "recipient_username", "bob",
+                "content", content,
+                "logical_timestamp", timestamp,
+                "delivery_status", status);
     }
 }

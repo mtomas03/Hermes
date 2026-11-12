@@ -168,9 +168,11 @@ public class InboundMessageService implements InboundMessagePort {
             messageStore.saveFallback(stored);
             log.info("Message {} written to Cassandra across both tables via fallback path", command.messageId());
             return stored;
-        } catch (Exception cassEx) {
+        } catch (InvalidMessageException conflict) {
+            throw conflict;
+        } catch (Exception e) {
             throw new PersistenceUnavailableException(
-                    "Both Kafka and Cassandra are unavailable; message rejected", cassEx);
+                    "Both Kafka and Cassandra are unavailable; message rejected", e);
         }
     }
 

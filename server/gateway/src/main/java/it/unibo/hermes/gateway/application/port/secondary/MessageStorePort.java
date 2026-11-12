@@ -1,5 +1,6 @@
 package it.unibo.hermes.gateway.application.port.secondary;
 
+import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Message;
 
@@ -15,6 +16,7 @@ public interface MessageStorePort {
      * Persists a message directly, bypassing the message backbone.
      *
      * @param message the message to persist
+     * @throws InvalidMessageException if the id is already used by a different message
      */
     void saveFallback(Message message);
 
