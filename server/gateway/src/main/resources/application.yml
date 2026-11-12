@@ -50,7 +50,7 @@ spring:
       properties:
         delivery.timeout.ms: 5000
         request.timeout.ms: 3000
-        max.block.ms: 3000
+        max.block.ms: 1000 # send() blocks at most this long on metadata, inside the publish budget
     consumer:
       group-id: hermes-gateway
       auto-offset-reset: earliest
@@ -72,6 +72,8 @@ hermes:
     heartbeat-check-ms: ${HB_CHECK_MS:30000} # presence TTL refresh interval
 
   kafka:
+    publish-budget-ms: ${KAFKA_PUBLISH_BUDGET_MS:3000} # total STOMP-thread time for one message, retries included
+    ack-budget-ms: ${KAFKA_ACK_BUDGET_MS:2000}
     retry:
       max-attempts: 3
       initial-backoff-ms: 100

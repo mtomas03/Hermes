@@ -3,6 +3,7 @@ package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 import it.unibo.hermes.gateway.application.model.SendMessageCommand;
 import it.unibo.hermes.gateway.application.port.primary.AcknowledgementPort;
 import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
+import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Message;
@@ -139,6 +140,19 @@ class StompControllerTest {
         verify(acknowledgementPort).acknowledge(messageId, "alice");
         verifyNoInteractions(inboundMessagePort);
         verifyNoInteractions(messagingTemplate);
+    }
+
+    @Test
+    void ackThatCannotBeRecordedShouldBeReportedToTheClientWithItsMessageId() {
+        String messageId = UUID.randomUUID().toString();
+        doThrow(new BackboneUnavailableException("down", null))
+                .when(acknowledgementPort).acknowledge(messageId, "alice");
+
+        stompController.ack(new DeliveryAckDto(messageId), ALICE);
+
+        ErrorDto error = captureError();
+        assertThat(error.code()).isEqualTo("ACK_NOT_RECORDED");
+        assertThat(error.messageId()).isEqualTo(messageId);
     }
 
     @Test

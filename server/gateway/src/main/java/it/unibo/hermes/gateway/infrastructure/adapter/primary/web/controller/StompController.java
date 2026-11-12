@@ -3,6 +3,7 @@ package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 import it.unibo.hermes.gateway.application.model.SendMessageCommand;
 import it.unibo.hermes.gateway.application.port.primary.AcknowledgementPort;
 import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
+import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Message;
@@ -108,7 +109,13 @@ public class StompController {
 
         log.debug("Delivery ACK received from recipient '{}' for message {}", recipient, payload.messageId());
 
-        acknowledgementPort.acknowledge(payload.messageId(), recipient);
+        try {
+            acknowledgementPort.acknowledge(payload.messageId(), recipient);
+        } catch (BackboneUnavailableException e) {
+            log.warn("ACK of message {} from '{}' not recorded: {}", payload.messageId(), recipient, e.getMessage());
+            sendError(recipient, payload.messageId(), "ACK_NOT_RECORDED",
+                    "Acknowledgement could not be recorded: it will be reconciled by the next synchronisation");
+        }
     }
 
     /**

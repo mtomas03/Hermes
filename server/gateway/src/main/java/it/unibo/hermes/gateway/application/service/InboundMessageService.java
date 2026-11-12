@@ -1,15 +1,13 @@
 package it.unibo.hermes.gateway.application.service;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
 import it.unibo.hermes.gateway.application.model.SendMessageCommand;
 import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
 import it.unibo.hermes.gateway.application.port.secondary.MessagePublisherPort;
 import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
 import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
-import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
 import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
-import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.exception.InvalidUsernameException;
+import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.ConversationIds;
 import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.domain.model.MessageStatus;
@@ -19,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -36,6 +35,7 @@ public class InboundMessageService implements InboundMessagePort {
     private final MessagePublisherPort messagePublisher;
     private final MessageStorePort messageStore;
     private final UserAccountPort userAccounts;
+    private final KafkaMonitorService backboneMonitor;
     private final Map<String, Boolean> knownUsernames = Collections.synchronizedMap(
             new LinkedHashMap<>(16, 0.75f, true) {
                 @Override
@@ -43,6 +43,9 @@ public class InboundMessageService implements InboundMessagePort {
                     return size() > KNOWN_USERNAMES_CAPACITY;
                 }
             });
+
+    @Value("${hermes.kafka.publish-budget-ms:3000}")
+    private long publishBudgetMs;
 
     @Value("${hermes.kafka.retry.max-attempts:3}")
     private int maxAttempts;
@@ -59,14 +62,17 @@ public class InboundMessageService implements InboundMessagePort {
      * @param messagePublisher the port publishing accepted messages to the backbone
      * @param messageStore     the port persisting messages directly when the backbone is unavailable
      * @param userAccounts     the port used to verify that the recipient is a registered user
+     * @param backboneMonitor  the monitor telling whether the backbone is reachable
      */
     public InboundMessageService(
             MessagePublisherPort messagePublisher,
             MessageStorePort messageStore,
-            UserAccountPort userAccounts) {
+            UserAccountPort userAccounts,
+            KafkaMonitorService backboneMonitor) {
         this.messagePublisher = messagePublisher;
         this.messageStore = messageStore;
         this.userAccounts = userAccounts;
+        this.backboneMonitor = backboneMonitor;
     }
 
     private SendMessageCommand validate(SendMessageCommand command) {
@@ -151,7 +157,7 @@ public class InboundMessageService implements InboundMessagePort {
         SendMessageCommand validated = validate(command);
         Message pending = toMessage(validated, MessageStatus.PENDING);
 
-        if (tryPublish(pending)) {
+        if (tryPublishToMessageBackbone(pending)) {
             log.debug("Message {} published to Kafka (ts={})", command.messageId(), command.logicalTimestamp());
             return pending;
         }
@@ -168,28 +174,26 @@ public class InboundMessageService implements InboundMessagePort {
         }
     }
 
-    private boolean tryPublish(Message message) {
-        long backoff = initialBackoffMs;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                messagePublisher.publish(message);
+    private boolean tryPublishToMessageBackbone(Message message) {
+        if (!backboneMonitor.isMessageBackboneAvailable()) {
+            log.warn("Kafka known to be unavailable - skipping it for message {}", message.messageId());
+            return false;
+        }
+        BoundedRetry.Outcome outcome = BoundedRetry.run(
+                remaining -> messagePublisher.publish(message, remaining),
+                maxAttempts, initialBackoffMs, backoffMultiplier, Duration.ofMillis(publishBudgetMs), true);
+        switch (outcome.result()) {
+            case SUCCESS:
                 return true;
-            } catch (BackboneUnavailableException e) {
-                log.warn("Kafka publish attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                if (attempt < maxAttempts) {
-                    sleep(backoff);
-                    backoff = (long) (backoff * backoffMultiplier);
-                }
-            }
+            case OUTCOME_UNKNOWN:
+                log.warn("Kafka publish of message {} timed out: it may still be delivered, falling back idempotently",
+                        message.messageId());
+                break;
+            default:
+                log.warn("Kafka publish of message {} failed: {}", message.messageId(),
+                        outcome.lastFailure() != null ? outcome.lastFailure().getMessage() : "time budget exhausted");
         }
+        backboneMonitor.reportBackboneFailure();
         return false;
-    }
-
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

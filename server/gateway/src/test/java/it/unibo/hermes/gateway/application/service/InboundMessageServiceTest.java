@@ -17,7 +17,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,11 +38,16 @@ class InboundMessageServiceTest {
     @Mock
     private UserAccountPort userAccounts;
 
+    @Mock
+    private KafkaMonitorService backboneMonitor;
+
     private InboundMessageService service;
 
     @BeforeEach
     void setUp() {
-        service = new InboundMessageService(messagePublisher, messageStore, userAccounts);
+        service = new InboundMessageService(messagePublisher, messageStore, userAccounts, backboneMonitor);
+        lenient().when(backboneMonitor.isMessageBackboneAvailable()).thenReturn(true);
+        ReflectionTestUtils.setField(service, "publishBudgetMs", 2_000L);
         lenient().when(userAccounts.existsByUsername("bob")).thenReturn(true);
         ReflectionTestUtils.setField(service, "maxAttempts", 2);
         ReflectionTestUtils.setField(service, "initialBackoffMs", 1L);
@@ -63,7 +70,7 @@ class InboundMessageServiceTest {
 
     @Test
     void shouldPublishToKafkaOnFirstAttempt() {
-        doNothing().when(messagePublisher).publish(any(Message.class));
+        doNothing().when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         Message accepted = service.publish(command());
 
@@ -71,7 +78,7 @@ class InboundMessageServiceTest {
         assertThat(accepted.senderUsername()).isEqualTo("alice");
         assertThat(accepted.recipientUsername()).isEqualTo("bob");
         assertThat(accepted.content()).isEqualTo("hi");
-        verify(messagePublisher, times(1)).publish(any(Message.class));
+        verify(messagePublisher, times(1)).publish(any(Message.class), any(Duration.class));
         verifyNoInteractions(messageStore);
     }
 
@@ -79,24 +86,24 @@ class InboundMessageServiceTest {
     void shouldRetryAndSucceedOnSecondAttempt() {
         doThrow(new BackboneUnavailableException("Kafka glitch", new RuntimeException()))
                 .doNothing()
-                .when(messagePublisher).publish(any(Message.class));
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         Message accepted = service.publish(command());
 
         assertThat(accepted).isNotNull();
-        verify(messagePublisher, times(2)).publish(any(Message.class));
+        verify(messagePublisher, times(2)).publish(any(Message.class), any(Duration.class));
         verifyNoInteractions(messageStore);
     }
 
     @Test
     void shouldFallBackToStoreWhenKafkaFailsAllAttempts() {
         doThrow(new BackboneUnavailableException("Kafka down", new RuntimeException()))
-                .when(messagePublisher).publish(any(Message.class));
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         Message accepted = service.publish(command());
 
         assertThat(accepted).isNotNull();
-        verify(messagePublisher, times(2)).publish(any(Message.class));
+        verify(messagePublisher, times(2)).publish(any(Message.class), any(Duration.class));
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(messageStore).saveFallback(captor.capture());
         Message fallback = captor.getValue();
@@ -108,7 +115,7 @@ class InboundMessageServiceTest {
     @Test
     void shouldRejectMessageWhenBothKafkaAndStoreAreUnavailable() {
         doThrow(new BackboneUnavailableException("Kafka down", new RuntimeException()))
-                .when(messagePublisher).publish(any(Message.class));
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
         doThrow(new RuntimeException("Cassandra unreachable"))
                 .when(messageStore).saveFallback(any(Message.class));
 
@@ -117,7 +124,7 @@ class InboundMessageServiceTest {
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasMessageContaining("Both Kafka and Cassandra are unavailable");
 
-        verify(messagePublisher, times(2)).publish(any(Message.class));
+        verify(messagePublisher, times(2)).publish(any(Message.class), any(Duration.class));
         verify(messageStore, times(1)).saveFallback(any(Message.class));
     }
 
@@ -164,7 +171,7 @@ class InboundMessageServiceTest {
 
     @Test
     void shouldNormaliseRecipientCaseAndWhitespaceAndStoreTheDerivedConversationId() {
-        doNothing().when(messagePublisher).publish(any(Message.class));
+        doNothing().when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         Message accepted = service.publish(command(" Bob ", "hi", "alice-bob"));
 
@@ -208,7 +215,7 @@ class InboundMessageServiceTest {
     @Test
     void shouldAcceptMessageWhenAccountStoreIsUnavailable() {
         when(userAccounts.existsByUsername("charlie")).thenThrow(new RuntimeException("postgres down"));
-        doNothing().when(messagePublisher).publish(any(Message.class));
+        doNothing().when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         Message accepted = service.publish(command("charlie", "hi", "alice-charlie"));
 
@@ -217,7 +224,7 @@ class InboundMessageServiceTest {
 
     @Test
     void shouldNotQueryTheAccountStoreAgainForARecipientAlreadySeenToExist() {
-        doNothing().when(messagePublisher).publish(any(Message.class));
+        doNothing().when(messagePublisher).publish(any(Message.class), any(Duration.class));
 
         service.publish(command());
         service.publish(command());
@@ -231,5 +238,84 @@ class InboundMessageServiceTest {
 
         assertThatThrownBy(() -> service.publish(bad)).isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(messagePublisher, messageStore);
+    }
+
+    @Test
+    void shouldGoStraightToFallbackWithoutTouchingKafkaWhenTheBackboneIsKnownDown() {
+        when(backboneMonitor.isMessageBackboneAvailable()).thenReturn(false);
+
+        Message accepted = service.publish(command());
+
+        assertThat(accepted.status()).isEqualTo(MessageStatus.STORED);
+        verifyNoInteractions(messagePublisher);
+        verify(messageStore).saveFallback(any(Message.class));
+    }
+
+    @Test
+    void shouldMarkTheBackboneDownAfterFailedPublishSoLaterMessagesSkipIt() {
+        doThrow(new BackboneUnavailableException("down", new RuntimeException()))
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
+
+        service.publish(command());
+
+        verify(backboneMonitor).reportBackboneFailure();
+    }
+
+    @Test
+    void shouldNotRetryATimeoutBecauseTheRecordMayAlreadyBePublished() {
+        doThrow(new BackboneUnavailableException("timeout", new RuntimeException(), true))
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
+
+        Message accepted = service.publish(command());
+
+        verify(messagePublisher, times(1)).publish(any(Message.class), any(Duration.class));
+        // idempotent fallback with the very same message id
+        ArgumentCaptor<Message> stored = ArgumentCaptor.forClass(Message.class);
+        verify(messageStore).saveFallback(stored.capture());
+        assertThat(stored.getValue().messageId()).isEqualTo(accepted.messageId());
+        verify(backboneMonitor).reportBackboneFailure();
+    }
+
+    @Test
+    void shouldStillRetryConfirmedFailures() {
+        ReflectionTestUtils.setField(service, "maxAttempts", 3);
+        doThrow(new BackboneUnavailableException("rejected", new RuntimeException(), false))
+                .when(messagePublisher).publish(any(Message.class), any(Duration.class));
+
+        service.publish(command());
+
+        verify(messagePublisher, times(3)).publish(any(Message.class), any(Duration.class));
+    }
+
+    @Test
+    void shouldBoundTheTotalPublishingTimeUnderAKafkaOutage() {
+        ReflectionTestUtils.setField(service, "maxAttempts", 50);
+        ReflectionTestUtils.setField(service, "initialBackoffMs", 10L);
+        ReflectionTestUtils.setField(service, "publishBudgetMs", 150L);
+        AtomicInteger attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            attempts.incrementAndGet();
+            Thread.sleep(40);
+            throw new BackboneUnavailableException("slow failure", new RuntimeException());
+        }).when(messagePublisher).publish(any(Message.class), any(Duration.class));
+
+        long start = System.nanoTime();
+        service.publish(command());
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(elapsedMs).isLessThan(1_000);
+        assertThat(attempts.get()).isLessThan(50);
+        verify(messageStore).saveFallback(any(Message.class));
+    }
+
+    @Test
+    void shouldNeverGiveAnAttemptMoreTimeThanTheRemainingBudget() {
+        ReflectionTestUtils.setField(service, "publishBudgetMs", 500L);
+        ArgumentCaptor<Duration> timeout = ArgumentCaptor.forClass(Duration.class);
+
+        service.publish(command());
+
+        verify(messagePublisher).publish(any(Message.class), timeout.capture());
+        assertThat(timeout.getValue()).isLessThanOrEqualTo(Duration.ofMillis(500));
     }
 }

@@ -12,7 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 
 /**
  * Kafka producer in Gateway for the {@code message-created} topic:
@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 public class MessageProducer implements MessagePublisherPort {
 
     private static final Logger log = LoggerFactory.getLogger(MessageProducer.class);
-    private static final long SEND_TIMEOUT_SECONDS = 3L;
 
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
@@ -38,7 +37,7 @@ public class MessageProducer implements MessagePublisherPort {
     }
 
     @Override
-    public void publish(Message message) {
+    public void publish(Message message, Duration timeout) {
         MessageEvent event = new MessageEvent(
                 message.messageId(),
                 message.conversationId(),
@@ -54,13 +53,8 @@ public class MessageProducer implements MessagePublisherPort {
                     "Failed to serialize MessageEvent for message " + event.messageId(), e);
         }
 
-        try {
-            kafkaTemplate.send(topic, event.conversationId(), payload)
-                    .get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            log.debug("Published MessageEvent {} to topic {}", event.messageId(), topic);
-        } catch (Exception e) {
-            throw new BackboneUnavailableException(
-                    "Failed to publish message " + event.messageId() + " to Kafka", e);
-        }
+        KafkaSend.sendAndAwait(kafkaTemplate, topic, event.conversationId(), payload, timeout,
+                "Failed to publish message " + event.messageId() + " to Kafka");
+        log.debug("Published MessageEvent {} to topic {}", event.messageId(), topic);
     }
 }

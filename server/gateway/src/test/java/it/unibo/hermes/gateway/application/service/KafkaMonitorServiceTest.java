@@ -33,7 +33,7 @@ class KafkaMonitorServiceTest {
 
     @Test
     void shouldStartAsAvailableByDefault() {
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
     }
 
     @Test
@@ -42,7 +42,7 @@ class KafkaMonitorServiceTest {
 
         monitorService.checkBackbone();
 
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
         verifyNoInteractions(registry);
     }
 
@@ -52,7 +52,7 @@ class KafkaMonitorServiceTest {
 
         monitorService.checkBackbone();
 
-        assertThat(monitorService.isBackboneAvailable()).isFalse();
+        assertThat(monitorService.isMessageBackboneAvailable()).isFalse();
         verifyNoInteractions(registry);
     }
 
@@ -64,7 +64,7 @@ class KafkaMonitorServiceTest {
         monitorService.checkBackbone(); // true -> false
         monitorService.checkBackbone(); // false -> true, should broadcast
 
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
         verify(clientNotifier).requestReconnect("alice", "BACKBONE_RECOVERED");
     }
 
@@ -90,5 +90,26 @@ class KafkaMonitorServiceTest {
         monitorService.checkBackbone();
 
         verify(clientNotifier).requestReconnect("healthy-user", "BACKBONE_RECOVERED");
+    }
+
+    @Test
+    void reportedPublishFailureShouldImmediatelyMarkTheBackboneUnavailable() {
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
+
+        monitorService.reportBackboneFailure();
+
+        assertThat(monitorService.isMessageBackboneAvailable()).isFalse();
+    }
+
+    @Test
+    void probeShouldRestoreTheBackboneAfterAReportedFailureAndForceReconnect() {
+        when(registry.allUsernames()).thenReturn(Set.of("alice"));
+        when(kafkaHealthProbe.isHealthy()).thenReturn(true);
+        monitorService.reportBackboneFailure();
+
+        monitorService.checkBackbone();
+
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
+        verify(clientNotifier).requestReconnect("alice", "BACKBONE_RECOVERED");
     }
 }
