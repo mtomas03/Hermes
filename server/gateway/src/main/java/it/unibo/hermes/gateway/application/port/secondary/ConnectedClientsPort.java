@@ -8,18 +8,23 @@ import java.util.Set;
 public interface ConnectedClientsPort {
 
     /**
-     * Registers a client as connected to this Gateway instance.
+     * Records a STOMP session of a user.
      *
-     * @param username the username of the client to register
+     * <p> A user may hold several sessions at once.
+     *
+     * @param username  the authenticated user
+     * @param sessionId the STOMP session identifier
      */
-    void register(String username);
+    void register(String username, String sessionId);
 
     /**
-     * Unregisters a client as connected to this Gateway instance.
+     * Removes one STOMP session of a user.
      *
-     * @param username the username of the client to unregister
+     * @param username the authenticated user
+     * @param sessionId the STOMP session identifier
+     * @return true only if this call removed the user's last open session
      */
-    void unregister(String username);
+    boolean unregister(String username, String sessionId);
 
     /**
      * Checks if a client is currently connected to this Gateway instance.

@@ -46,7 +46,7 @@ class PresenceEventListenerTest {
 
         listener.onSessionConnected(event);
 
-        verify(sessionLifecycle).clientConnected("alice");
+        verify(sessionLifecycle).clientConnected("alice", "session-1");
     }
 
     @Test
@@ -65,7 +65,7 @@ class PresenceEventListenerTest {
 
         listener.onSessionDisconnect(event);
 
-        verify(sessionLifecycle).clientDisconnected("alice");
+        verify(sessionLifecycle).clientDisconnected("alice", "session-1");
     }
 
     @Test

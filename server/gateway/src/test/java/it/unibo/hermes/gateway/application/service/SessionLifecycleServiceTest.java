@@ -9,6 +9,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SessionLifecycleServiceTest {
@@ -27,19 +30,31 @@ class SessionLifecycleServiceTest {
 
     @Test
     void shouldRegisterClientAndMarkOnlineOnConnect() {
-        service.clientConnected("alice");
+        service.clientConnected("alice", "s1");
 
         InOrder order = inOrder(connectedClients, presenceService);
-        order.verify(connectedClients).register("alice");
+        order.verify(connectedClients).register("alice", "s1");
         order.verify(presenceService).setOnline("alice", "gateway-1");
     }
 
     @Test
-    void shouldUnregisterClientAndMarkOfflineOnDisconnect() {
-        service.clientDisconnected("alice");
+    void shouldMarkOfflineWhenTheLastSessionDisconnects() {
+        when(connectedClients.unregister("alice", "s1")).thenReturn(true);
+
+        service.clientDisconnected("alice", "s1");
 
         InOrder order = inOrder(connectedClients, presenceService);
-        order.verify(connectedClients).unregister("alice");
+        order.verify(connectedClients).unregister("alice", "s1");
         order.verify(presenceService).setOffline("alice", "gateway-1");
+    }
+
+    @Test
+    void shouldKeepPresenceWhenAnotherSessionOfTheUserIsStillOpen() {
+        when(connectedClients.unregister("alice", "old-session")).thenReturn(false);
+
+        service.clientDisconnected("alice", "old-session");
+
+        verify(connectedClients).unregister("alice", "old-session");
+        verifyNoInteractions(presenceService);
     }
 }

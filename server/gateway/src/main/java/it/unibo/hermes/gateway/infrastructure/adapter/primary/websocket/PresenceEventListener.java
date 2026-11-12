@@ -4,6 +4,7 @@ import it.unibo.hermes.gateway.application.port.primary.SessionLifecyclePort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
@@ -45,7 +46,8 @@ public class PresenceEventListener {
             log.warn("SessionConnectedEvent with no authenticated principal - ignoring");
             return;
         }
-        sessionLifecycle.clientConnected(username);
+        String sessionId = StompHeaderAccessor.wrap(event.getMessage()).getSessionId();
+        sessionLifecycle.clientConnected(username, sessionId);
         log.info("STOMP session established for user '{}'", username);
     }
 
@@ -60,7 +62,7 @@ public class PresenceEventListener {
         if (username == null) {
             return;
         }
-        sessionLifecycle.clientDisconnected(username);
+        sessionLifecycle.clientDisconnected(username, event.getSessionId());
         log.info("STOMP session closed for user '{}' - status: {}", username, event.getCloseStatus());
     }
 

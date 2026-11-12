@@ -32,14 +32,15 @@ public class SessionLifecycleService implements SessionLifecyclePort {
     }
 
     @Override
-    public void clientConnected(String username) {
-        connectedClients.register(username);
+    public void clientConnected(String username, String sessionId) {
+        connectedClients.register(username, sessionId);
         presenceService.setOnline(username, gatewayInstanceId);
     }
 
     @Override
-    public void clientDisconnected(String username) {
-        connectedClients.unregister(username);
-        presenceService.setOffline(username, gatewayInstanceId);
+    public void clientDisconnected(String username, String sessionId) {
+        if (connectedClients.unregister(username, sessionId)) {
+            presenceService.setOffline(username, gatewayInstanceId);
+        }
     }
 }
