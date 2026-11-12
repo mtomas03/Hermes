@@ -1,5 +1,6 @@
-package it.unibo.hermes.gateway.application.service;
+package it.unibo.hermes.gateway.infrastructure.adapter.secondary.health;
 
+import it.unibo.hermes.gateway.application.port.secondary.BackboneHealthPort;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.slf4j.Logger;
@@ -11,10 +12,11 @@ import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Probe component to check Kafka broker health and reachability.
+ * Secondary adapter implementing {@link BackboneHealthPort}
+ * by probing Kafka broker reachability.
  */
 @Component
-public class KafkaHealthProbe {
+public class KafkaHealthProbe implements BackboneHealthPort {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaHealthProbe.class);
 
@@ -29,6 +31,7 @@ public class KafkaHealthProbe {
      *
      * @return {@code true} if reachable, {@code false} otherwise
      */
+    @Override
     public boolean isHealthy() {
         Properties props = new Properties();
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);

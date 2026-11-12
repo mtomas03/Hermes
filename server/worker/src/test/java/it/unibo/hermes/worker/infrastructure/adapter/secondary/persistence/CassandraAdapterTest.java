@@ -579,6 +579,40 @@ class CassandraAdapterTest {
         assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isTrue();
     }
 
+    @Test
+    void findRecipientUsernameShouldReturnTheStoredRecipient() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id))
+                .thenReturn(Optional.of(messageWithStatus(id, DeliveryStatus.STORED)));
+
+        assertThat(cassandraAdapter.findRecipientUsername(id.toString())).contains("bob");
+    }
+
+    @Test
+    void findRecipientUsernameShouldBeEmptyForUnknownMessage() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
+
+        assertThat(cassandraAdapter.findRecipientUsername(id.toString())).isEmpty();
+    }
+
+    @Test
+    void findRecipientUsernameShouldTreatMalformedIdAsUnknownWithoutTouchingCassandra() {
+        assertThat(cassandraAdapter.findRecipientUsername("not-a-messageId")).isEmpty();
+        assertThat(cassandraAdapter.findRecipientUsername(null)).isEmpty();
+
+        verifyNoInteractions(messageByIdRepository);
+    }
+
+    @Test
+    void findRecipientUsernameShouldReportCassandraFailures() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenThrow(new RuntimeException("down"));
+
+        assertThatThrownBy(() -> cassandraAdapter.findRecipientUsername(id.toString()))
+                .isInstanceOf(PersistenceUnavailableException.class);
+    }
+
     private void givenStored(UUID id, DeliveryStatus status) {
         when(messageByIdRepository.findById(id))
                 .thenReturn(Optional.of(messageWithStatus(id, status)));

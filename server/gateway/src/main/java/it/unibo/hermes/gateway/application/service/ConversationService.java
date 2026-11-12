@@ -1,39 +1,31 @@
 package it.unibo.hermes.gateway.application.service;
 
 import it.unibo.hermes.gateway.application.port.primary.ConversationPort;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.ConversationDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.CassandraAdapter;
+import it.unibo.hermes.gateway.application.port.secondary.ConversationStorePort;
+import it.unibo.hermes.gateway.domain.model.Conversation;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 /**
- * Service class for managing conversations.
+ * Service managing the conversations of a user.
  */
 @Service
 public class ConversationService implements ConversationPort {
 
-    private final CassandraAdapter cassandraAdapter;
-
-    public ConversationService(CassandraAdapter cassandraAdapter) {
-        this.cassandraAdapter = cassandraAdapter;
-    }
+    private final ConversationStorePort conversationStore;
 
     /**
-     * Retrieves a list of conversations for the specified user.
+     * Creates the conversation service.
      *
-     * @param currentUsername the username of the current user
-     * @return a list of ConversationDto representing the user's conversations
+     * @param conversationStore the port providing conversation membership
      */
+    public ConversationService(ConversationStorePort conversationStore) {
+        this.conversationStore = conversationStore;
+    }
+
     @Override
-    public List<ConversationDto> getUserConversations(String currentUsername) {
-        return cassandraAdapter.findConversationsByUsername(currentUsername)
-                .stream()
-                .map(conv -> new ConversationDto(
-                        conv.getConversationId(),
-                        currentUsername,
-                        conv.getOtherParticipant()
-                ))
-                .toList();
+    public List<Conversation> getUserConversations(String currentUsername) {
+        return conversationStore.findByUsername(currentUsername);
     }
 }

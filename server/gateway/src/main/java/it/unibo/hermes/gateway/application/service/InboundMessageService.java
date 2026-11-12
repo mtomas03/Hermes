@@ -1,31 +1,51 @@
 package it.unibo.hermes.gateway.application.service;
 
+import it.unibo.hermes.gateway.application.model.SendMessageCommand;
 import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
-import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
+import it.unibo.hermes.gateway.application.port.secondary.MessagePublisherPort;
+import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
+import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
+import it.unibo.hermes.gateway.domain.exception.InvalidUsernameException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.model.ConversationIds;
+import it.unibo.hermes.gateway.domain.model.Message;
 import it.unibo.hermes.gateway.domain.model.MessageStatus;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.MessageToGatewayDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.CassandraAdapter;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.producer.MessageProducer;
-import it.unibo.hermes.gateway.infrastructure.event.MessageEvent;
+import it.unibo.hermes.gateway.domain.model.Username;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * Service that processes inbound client messages through Kafka or Cassandra.
+ * Service that processes inbound client messages through the message backbone or the direct store fallback.
  */
 @Service
 public class InboundMessageService implements InboundMessagePort {
 
     private static final Logger log = LoggerFactory.getLogger(InboundMessageService.class);
+    private static final int KNOWN_USERNAMES_CAPACITY = 10_000;
 
-    private final MessageProducer messageProducer;
-    private final CassandraAdapter cassandraAdapter;
+    private final MessagePublisherPort messagePublisher;
+    private final MessageStorePort messageStore;
+    private final UserAccountPort userAccounts;
+    private final KafkaMonitorService backboneMonitor;
+    private final Map<String, Boolean> knownUsernames = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                    return size() > KNOWN_USERNAMES_CAPACITY;
+                }
+            });
+
+    @Value("${hermes.kafka.publish-budget-ms:3000}")
+    private long publishBudgetMs;
 
     @Value("${hermes.kafka.retry.max-attempts:3}")
     private int maxAttempts;
@@ -39,86 +59,143 @@ public class InboundMessageService implements InboundMessagePort {
     /**
      * Creates the inbound message service.
      *
-     * @param messageProducer  the producer handling message creation event publication to Kafka
-     * @param cassandraAdapter the adapter managing direct fallback persistence in Cassandra
+     * @param messagePublisher the port publishing accepted messages to the backbone
+     * @param messageStore     the port persisting messages directly when the backbone is unavailable
+     * @param userAccounts     the port used to verify that the recipient is a registered user
+     * @param backboneMonitor  the monitor telling whether the backbone is reachable
      */
-    public InboundMessageService(MessageProducer messageProducer,
-                                 CassandraAdapter cassandraAdapter) {
-        this.messageProducer = messageProducer;
-        this.cassandraAdapter = cassandraAdapter;
+    public InboundMessageService(
+            MessagePublisherPort messagePublisher,
+            MessageStorePort messageStore,
+            UserAccountPort userAccounts,
+            KafkaMonitorService backboneMonitor) {
+        this.messagePublisher = messagePublisher;
+        this.messageStore = messageStore;
+        this.userAccounts = userAccounts;
+        this.backboneMonitor = backboneMonitor;
+    }
+
+    private SendMessageCommand validate(SendMessageCommand command) {
+        String sender = command.senderUsername();
+
+        if (command.recipientUsername() == null || command.recipientUsername().isBlank()) {
+            throw new InvalidMessageException(
+                    "MISSING_RECIPIENT",
+                    "Field 'recipientUsername' is required");
+        }
+        if (command.content() == null || command.content().isBlank()) {
+            throw new InvalidMessageException(
+                    "MISSING_CONTENT",
+                    "Field 'content' is required");
+        }
+        String recipient;
+        try {
+            recipient = Username.normalise(command.recipientUsername()).value();
+        } catch (InvalidUsernameException e) {
+            throw new InvalidMessageException(
+                    "INVALID_RECIPIENT",
+                    "Field 'recipientUsername' " + Username.FORMAT_DESCRIPTION);
+        }
+        if (sender.trim().equalsIgnoreCase(recipient)) {
+            throw new InvalidMessageException(
+                    "SELF_SEND", "Cannot send a message to yourself");
+        }
+
+        String derivedConversationId = ConversationIds.canonical(sender, recipient);
+        if (!derivedConversationId.equals(command.conversationId())) {
+            log.warn("Rejected message from '{}': conversationId '{}' does not match the participants",
+                    sender, command.conversationId());
+            throw new InvalidMessageException("INVALID_CONVERSATION",
+                    "Field 'conversationId' does not match the conversation participants");
+        }
+        if (!recipientExists(recipient)) {
+            throw new InvalidMessageException(
+                    "UNKNOWN_RECIPIENT", "Recipient '" + recipient + "' does not exist");
+        }
+        return new SendMessageCommand(
+                command.messageId(), derivedConversationId, sender, recipient,
+                command.content(), command.logicalTimestamp());
+    }
+
+    private boolean recipientExists(String recipient) {
+        if (knownUsernames.containsKey(recipient)) {
+            return true;
+        }
+        try {
+            boolean exists = userAccounts.existsByUsername(recipient);
+            if (exists) {
+                knownUsernames.put(recipient, Boolean.TRUE);
+            }
+            return exists;
+        } catch (Exception e) {
+            log.warn("Cannot verify recipient existence, accepting the message: {}", e.getClass().getSimpleName());
+            return true;
+        }
+    }
+
+    private Message toMessage(SendMessageCommand command, MessageStatus status) {
+        return new Message(
+                UUID.fromString(command.messageId()),
+                command.conversationId(),
+                command.senderUsername(),
+                command.recipientUsername(),
+                command.content(),
+                command.logicalTimestamp(),
+                status);
     }
 
     /**
-     * Processes and routes an incoming STOMP chat message through Kafka or direct Cassandra fallback.
+     * Processes and routes an incoming chat message through the backbone or the direct store fallback.
      *
-     * @param inbound        the validated message received from the client
-     * @param senderUsername the authenticated username of the sender
-     * @return the accepted message event used to construct the acknowledgement response
-     * @throws PersistenceUnavailableException if both Kafka and Cassandra are unreachable
+     * @param command the message received from the client
+     * @return the accepted message, used to construct the acknowledgement response
+     * @throws InvalidMessageException         if the message violates a business rule
+     * @throws PersistenceUnavailableException if both the backbone and the fallback store are unreachable
      */
     @Override
-    public MessageEvent publish(MessageToGatewayDto inbound, String senderUsername) {
-        String recipientUsername = inbound.recipientUsername();
-        String conversationId = inbound.conversationId();
-        Long logicalTimestamp = inbound.logicalTimestamp();
-        String messageContent = inbound.content();
-        UUID messageId = UUID.fromString(inbound.messageId());
+    public Message publish(SendMessageCommand command) {
+        SendMessageCommand validated = validate(command);
+        Message pending = toMessage(validated, MessageStatus.PENDING);
 
-        MessageEvent event = new MessageEvent(
-                messageId,
-                conversationId,
-                senderUsername,
-                recipientUsername,
-                messageContent,
-                logicalTimestamp
-        );
-
-        if (tryPublishToKafka(event)) {
-            log.debug("Message {} published to Kafka (ts={})", messageId, logicalTimestamp);
-            return event;
+        if (tryPublishToMessageBackbone(pending)) {
+            log.debug("Message {} published to Kafka (ts={})", command.messageId(), command.logicalTimestamp());
+            return pending;
         }
 
-        log.warn("Kafka unavailable - falling back to Cassandra for message {}", messageId);
+        log.warn("Kafka unavailable - falling back to Cassandra for message {}", command.messageId());
+        Message stored = toMessage(validated, MessageStatus.STORED);
         try {
-            cassandraAdapter.saveFallback(new MessageByConversation(
-                    messageId,
-                    conversationId,
-                    senderUsername,
-                    recipientUsername,
-                    messageContent,
-                    logicalTimestamp,
-                    MessageStatus.STORED
-            ));
-            log.info("Message {} written to Cassandra across both tables via fallback path", messageId);
-            return event;
-        } catch (Exception cassEx) {
+            messageStore.saveFallback(stored);
+            log.info("Message {} written to Cassandra across both tables via fallback path", command.messageId());
+            return stored;
+        } catch (InvalidMessageException conflict) {
+            throw conflict;
+        } catch (Exception e) {
             throw new PersistenceUnavailableException(
-                    "Both Kafka and Cassandra are unavailable; message rejected", cassEx);
+                    "Both Kafka and Cassandra are unavailable; message rejected", e);
         }
     }
 
-    private boolean tryPublishToKafka(MessageEvent event) {
-        long backoff = initialBackoffMs;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                messageProducer.publish(event);
+    private boolean tryPublishToMessageBackbone(Message message) {
+        if (!backboneMonitor.isMessageBackboneAvailable()) {
+            log.warn("Kafka known to be unavailable - skipping it for message {}", message.messageId());
+            return false;
+        }
+        BoundedRetry.Outcome outcome = BoundedRetry.run(
+                remaining -> messagePublisher.publish(message, remaining),
+                maxAttempts, initialBackoffMs, backoffMultiplier, Duration.ofMillis(publishBudgetMs), true);
+        switch (outcome.result()) {
+            case SUCCESS:
                 return true;
-            } catch (BackboneUnavailableException e) {
-                log.warn("Kafka publish attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                if (attempt < maxAttempts) {
-                    sleep(backoff);
-                    backoff = (long) (backoff * backoffMultiplier);
-                }
-            }
+            case OUTCOME_UNKNOWN:
+                log.warn("Kafka publish of message {} timed out: it may still be delivered, falling back idempotently",
+                        message.messageId());
+                break;
+            default:
+                log.warn("Kafka publish of message {} failed: {}", message.messageId(),
+                        outcome.lastFailure() != null ? outcome.lastFailure().getMessage() : "time budget exhausted");
         }
+        backboneMonitor.reportBackboneFailure();
         return false;
-    }
-
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

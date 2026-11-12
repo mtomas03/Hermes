@@ -1,5 +1,6 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.secondary.presence;
 
+import it.unibo.hermes.gateway.application.port.secondary.PresencePort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,10 +14,11 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Redis adapter managing user presence states and gateway routing references via Redis Hashes.
+ * Secondary adapter implementing {@link PresencePort} on top of Redis
+ * by storing and managing user presence information in a Redis hash with a TTL.
  */
 @Component
-public class RedisPresenceAdapter {
+public class RedisPresenceAdapter implements PresencePort {
 
     private static final Logger log = LoggerFactory.getLogger(RedisPresenceAdapter.class);
 
@@ -68,12 +70,7 @@ public class RedisPresenceAdapter {
         this.ttlSeconds = ttlSeconds;
     }
 
-    /**
-     * Sets a user's presence state to ONLINE and stores their hosting gateway ID in a Redis Hash with TTL.
-     *
-     * @param username  the username of the user
-     * @param gatewayId the unique identifier of the gateway instance hosting the active session
-     */
+    @Override
     public void setOnline(String username, String gatewayId) {
         String key = presenceKey(username);
         try {
@@ -88,13 +85,7 @@ public class RedisPresenceAdapter {
         }
     }
 
-    /**
-     * Deletes the user presence hash upon session disconnection,
-     * only if the record is assigned to the specified gateway.
-     *
-     * @param username  the username of the user
-     * @param gatewayId the unique identifier of the gateway that was hosting the active session
-     */
+    @Override
     public void setOffline(String username, String gatewayId) {
         try {
             String key = presenceKey(username);
@@ -114,11 +105,7 @@ public class RedisPresenceAdapter {
         }
     }
 
-    /**
-     * Refreshes the TTL expiration window for a user's presence hash upon receiving a heartbeat.
-     *
-     * @param username the username of the user
-     */
+    @Override
     public void refreshTtl(String username) {
         try {
             redis.expire(presenceKey(username), ttlSeconds, TimeUnit.SECONDS);
@@ -127,16 +114,7 @@ public class RedisPresenceAdapter {
         }
     }
 
-    /**
-     * Keeps the presence of a user, whose session is still active on this Gateway, alive:
-     * refreshes the TTL of the existing entry or recreates the entry when it has been lost.
-     *
-     * <p> Presence is transient state that is reconstructible from the open WebSocket sessions.
-     *
-     * @param username  the user with an active session on this Gateway
-     * @param gatewayId the identifier of this Gateway instance
-     * @return {@code true} if the entry had to be recreated
-     */
+    @Override
     public boolean refreshOrRestore(String username, String gatewayId) {
         try {
             Long restored = redis.execute(
@@ -154,12 +132,7 @@ public class RedisPresenceAdapter {
         }
     }
 
-    /**
-     * Checks if a user is currently marked as online in Redis.
-     *
-     * @param username the username to check
-     * @return {@code true} if the user is online, {@code false} otherwise
-     */
+    @Override
     public boolean isOnline(String username) {
         try {
             Object onlineVal = redis.opsForHash().get(presenceKey(username), fieldOnline);
@@ -170,12 +143,7 @@ public class RedisPresenceAdapter {
         }
     }
 
-    /**
-     * Retrieves the gateway instance ID hosting the specified user's active session.
-     *
-     * @param username the target username
-     * @return the assigned gateway instance ID, or {@code null} if offline or unreachable
-     */
+    @Override
     public String getGatewayId(String username) {
         try {
             Object val = redis.opsForHash().get(presenceKey(username), fieldGatewayId);

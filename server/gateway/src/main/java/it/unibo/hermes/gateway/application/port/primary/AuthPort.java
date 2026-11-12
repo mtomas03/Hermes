@@ -1,27 +1,30 @@
 package it.unibo.hermes.gateway.application.port.primary;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AuthResponseDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.LoginRequestDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.RegisterRequestDto;
+import it.unibo.hermes.gateway.application.model.AuthResult;
+import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
+import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
 
 /**
- * Port interface for authentication, including user registration and login.
+ * Primary port interface for authentication, including user registration and login.
  */
 public interface AuthPort {
 
     /**
-     * Registers a new user account with the provided registration details.
+     * Registers a new user account.
      *
-     * @param request the registration request containing username and password
-     * @throws IllegalArgumentException if the specified username is already registered
+     * @param username    the requested username
+     * @param rawPassword the clear-text password
+     * @throws UsernameAlreadyTakenException if the username is taken
      */
-    void register(RegisterRequestDto request);
+    void register(String username, String rawPassword);
 
     /**
-     * Authenticates a user with the provided login credentials.
+     * Authenticates a user.
      *
-     * @param request the login request containing username and password
-     * @return an authentication response containing the JWT token if authentication is successful
+     * @param username    the username
+     * @param rawPassword the clear-text password
+     * @return the authentication result containing the access token
+     * @throws InvalidCredentialsException if the credentials are wrong
      */
-    AuthResponseDto login(LoginRequestDto request);
+    AuthResult login(String username, String rawPassword);
 }

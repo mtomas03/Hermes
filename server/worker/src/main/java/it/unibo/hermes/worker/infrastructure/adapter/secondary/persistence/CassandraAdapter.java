@@ -115,6 +115,28 @@ public class CassandraAdapter {
     }
 
     /**
+     * Finds the recipient of a stored message in the authoritative table.
+     *
+     * @param messageId the message identifier
+     * @return the recipient username, or empty if the identifier is malformed or the message is unknown
+     * @throws PersistenceUnavailableException if Cassandra is unreachable or the read fails
+     */
+    public Optional<String> findRecipientUsername(String messageId) {
+        UUID id;
+        try {
+            id = UUID.fromString(messageId);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return Optional.empty();
+        }
+        try {
+            return messageByIdRepository.findById(id).map(MessageById::getRecipientUsername);
+        } catch (Exception e) {
+            log.error("Failed to read recipient of message {}: {}", messageId, e.getMessage());
+            throw new PersistenceUnavailableException("Cannot read message " + messageId, e);
+        }
+    }
+
+    /**
      * Moves the delivery status of a message forward, safely with respect to
      * concurrent writers, duplicated or re-delivered events and partial failures.
      *

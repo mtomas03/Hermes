@@ -1,5 +1,6 @@
-package it.unibo.hermes.gateway.domain.exception;
+package it.unibo.hermes.gateway.infrastructure.adapter.primary.web;
 
+import it.unibo.hermes.gateway.domain.exception.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -8,6 +9,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.transaction.CannotCreateTransactionException;
@@ -15,6 +17,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.SQLNonTransientConnectionException;
 import java.sql.SQLRecoverableException;
@@ -66,11 +70,10 @@ public class GlobalExceptionHandler {
     /**
      * Handles authentication failures resulting from invalid user credentials.
      *
-     * @param ex the bad credentials exception
      * @return a problem detail response with status 401 Unauthorized
      */
-    @ExceptionHandler(BadCredentialsException.class)
-    public ProblemDetail handleBadCredentials(BadCredentialsException ex) {
+    @ExceptionHandler({BadCredentialsException.class, InvalidCredentialsException.class})
+    public ProblemDetail handleBadCredentials() {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED);
         pd.setTitle("Authentication failed");
         pd.setDetail("Invalid username or password");
@@ -83,8 +86,8 @@ public class GlobalExceptionHandler {
      * @param ex the access denied exception
      * @return a problem detail response with status 403 Forbidden
      */
-    @ExceptionHandler(AccessDeniedException.class)
-    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+    @ExceptionHandler({AccessDeniedException.class, ConversationAccessDeniedException.class})
+    public ProblemDetail handleAccessDenied(RuntimeException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
         pd.setTitle("Access denied");
         pd.setDetail(ex.getMessage());
@@ -97,6 +100,51 @@ public class GlobalExceptionHandler {
      * @param ex the illegal argument exception
      * @return a problem detail response with status 400 Bad Request
      */
+    @ExceptionHandler(UserNotFoundException.class)
+    public ProblemDetail handleUserNotFound(UserNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /**
+     * Handles a registration of an already used username.
+     *
+     * @return a problem detail response with status 409 Conflict
+     */
+    @ExceptionHandler(UsernameAlreadyTakenException.class)
+    public ProblemDetail handleUsernameAlreadyTaken() {
+        return accountAlreadyExists();
+    }
+
+    /**
+     * Handles request bodies that cannot be parsed and request parameters of the wrong type.
+     *
+     * @return a problem detail response with status 400 Bad Request
+     */
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public ProblemDetail handleUnreadableRequest() {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setTitle("Bad request");
+        pd.setDetail("The request is malformed");
+        return pd;
+    }
+
+    /**
+     * Keeps the status chosen by code that throws {@link ResponseStatusException}.
+     *
+     * @param ex the exception carrying the status
+     * @return a problem detail response with the same status
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ProblemDetail handleResponseStatus(ResponseStatusException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(ex.getStatusCode());
+        pd.setTitle(ex.getStatusCode() instanceof HttpStatus status ? status.getReasonPhrase() : "Error");
+        pd.setDetail(ex.getReason());
+        return pd;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
@@ -129,6 +177,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ProblemDetail handleIntegrityViolation(DataIntegrityViolationException ex) {
         log.warn("Integrity constraint violated: {}", ex.getClass().getSimpleName());
+        return accountAlreadyExists();
+    }
+
+    private ProblemDetail accountAlreadyExists() {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setTitle("Conflict");
         pd.setDetail("The requested account already exists");
@@ -174,7 +226,7 @@ public class GlobalExceptionHandler {
         log.error("Internal error: {}", ex.getMessage(), ex);
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
         pd.setTitle("Internal error");
-        pd.setDetail(ex.getMessage());
+        pd.setDetail("An internal error occurred");
         return pd;
     }
 

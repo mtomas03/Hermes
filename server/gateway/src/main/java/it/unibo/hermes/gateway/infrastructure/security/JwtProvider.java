@@ -5,6 +5,7 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import it.unibo.hermes.gateway.application.port.secondary.TokenIssuerPort;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +19,7 @@ import java.util.Date;
  * Utility component handling cryptographic signing, generation and verification of JWT.
  */
 @Component
-public class JwtProvider {
+public class JwtProvider implements TokenIssuerPort {
 
     private static final Logger log = LoggerFactory.getLogger(JwtProvider.class);
 
@@ -35,25 +36,25 @@ public class JwtProvider {
      */
     @PostConstruct
     void init() {
-        byte[] keyBytes = Decoders.BASE64.decode(base64Secret);
+        byte[] keyBytes = Decoders.BASE64.decode(this.base64Secret);
         this.key = Keys.hmacShaKeyFor(keyBytes);
     }
 
-    /**
-     * Generates a signed JWT containing the specified username as its subject.
-     *
-     * @param username the username to set as the token subject
-     * @return the compact, signed JWT string
-     */
+    @Override
     public String generateToken(String username) {
         Date now = new Date();
-        Date expiry = new Date(now.getTime() + expirationMs);
+        Date expiry = new Date(now.getTime() + this.expirationMs);
         return Jwts.builder()
                 .subject(username)
                 .issuedAt(now)
                 .expiration(expiry)
-                .signWith(key)
+                .signWith(this.key)
                 .compact();
+    }
+
+    @Override
+    public long getExpirationMs() {
+        return this.expirationMs;
     }
 
     /**
@@ -83,18 +84,9 @@ public class JwtProvider {
         }
     }
 
-    /**
-     * Returns the token expiration duration in milliseconds.
-     *
-     * @return the expiration duration in milliseconds
-     */
-    public long getExpirationMs() {
-        return expirationMs;
-    }
-
     private Claims parseClaims(String token) {
         return Jwts.parser()
-                .verifyWith(key)
+                .verifyWith(this.key)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

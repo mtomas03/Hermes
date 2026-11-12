@@ -1,15 +1,14 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.UserDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.jpa.User;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.jpa.UserRepository;
+import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
+import it.unibo.hermes.gateway.domain.exception.UserNotFoundException;
+import it.unibo.hermes.gateway.domain.model.UserAccount;
+import it.unibo.hermes.gateway.domain.model.UserProfile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
 
@@ -22,36 +21,33 @@ import static org.mockito.Mockito.when;
 class UserSearchServiceTest {
 
     @Mock
-    private UserRepository userRepository;
+    private UserAccountPort userAccounts;
 
     private UserSearchService userSearchService;
 
     @BeforeEach
     void setUp() {
-        userSearchService = new UserSearchService(userRepository);
+        userSearchService = new UserSearchService(userAccounts);
     }
 
     @Test
-    void shouldReturnUserDtoWhenUserExists() {
-        User user = new User("alice", "hashed-password");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+    void shouldReturnProfileWhenUserExists() {
+        when(userAccounts.findByUsername("alice")).thenReturn(Optional.of(new UserAccount("alice", "hashed-password")));
 
-        UserDto result = userSearchService.searchUserByUsername("alice");
+        UserProfile result = userSearchService.searchUserByUsername("alice");
 
-        assertThat(result).isNotNull();
-        assertThat(result.username()).isEqualTo("alice");
-        verify(userRepository).findByUsername("alice");
+        assertThat(result).isEqualTo(new UserProfile("alice"));
+        verify(userAccounts).findByUsername("alice");
     }
 
     @Test
-    void shouldThrowResponseStatusExceptionWhenUserNotFound() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+    void shouldThrowUserNotFoundWhenUserDoesNotExist() {
+        when(userAccounts.findByUsername("ghost")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> userSearchService.searchUserByUsername("ghost"))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.NOT_FOUND);
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessage("User not found: ghost");
 
-        verify(userRepository).findByUsername("ghost");
+        verify(userAccounts).findByUsername("ghost");
     }
 }

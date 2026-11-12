@@ -1,4 +1,4 @@
-package it.unibo.hermes.gateway.application.service;
+package it.unibo.hermes.gateway.infrastructure.adapter.secondary.health;
 
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListTopicsResult;
