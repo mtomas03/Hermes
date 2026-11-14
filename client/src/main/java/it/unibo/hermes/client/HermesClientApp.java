@@ -8,9 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import javax.swing.*;
-import java.awt.*;
-
-import static java.util.concurrent.CompletableFuture.runAsync;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Client entry-point.
@@ -19,29 +18,42 @@ public class HermesClientApp {
 
     private static final Logger log = LoggerFactory.getLogger(HermesClientApp.class);
 
-    private static AnnotationConfigApplicationContext context;
+    private static final AtomicBoolean CLOSED = new AtomicBoolean(false);
+    private static volatile AnnotationConfigApplicationContext context;
 
     public static void main(String[] args) {
+        Runtime.getRuntime().addShutdownHook(new Thread(HermesClientApp::shutdownContext, "hermes-shutdown"));
+
         SwingUtilities.invokeLater(() -> {
             log.info("Initialising Spring application context");
-            context = new AnnotationConfigApplicationContext(AppConfig.class);
+            AnnotationConfigApplicationContext appContext = new AnnotationConfigApplicationContext(AppConfig.class);
+            context = appContext;
             log.info("Spring context ready");
 
-            NavigationController nav = context.getBean(NavigationController.class);
+            NavigationController nav = appContext.getBean(NavigationController.class);
             nav.initPrimaryFrame();
             nav.showLogin();
 
-            AuthController auth = context.getBean(AuthController.class);
-            runAsync(auth::restoreSession);
+            AuthController auth = appContext.getBean(AuthController.class);
+            CompletableFuture.runAsync(auth::restoreSession)
+                    .whenComplete((ignored, ex) -> {
+                        if (ex != null) {
+                            log.error("Unexpected failure during startup session restore", ex);
+                        }
+                    });
 
             nav.setPrimaryFrameVisible(true);
-
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                log.info("Application shutting down");
-                if (context != null) {
-                    context.close();
-                }
-            }));
         });
+    }
+
+    public static void shutdownContext() {
+        if (!CLOSED.compareAndSet(false, true)) {
+            return;
+        }
+        log.info("Application shutting down");
+        AnnotationConfigApplicationContext appContext = context;
+        if (appContext != null && appContext.isActive()) {
+            appContext.close();
+        }
     }
 }

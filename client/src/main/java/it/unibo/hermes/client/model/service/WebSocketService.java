@@ -3,6 +3,7 @@ package it.unibo.hermes.client.model.service;
 import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.websocket.StompSessionHandler;
 import it.unibo.hermes.client.model.dto.*;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.stomp.StompHeaders;
@@ -262,6 +263,11 @@ public class WebSocketService {
             log.info("Disconnecting WebSocket");
             s.disconnect();
         }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        disconnect();
     }
 
     /**

@@ -1,6 +1,8 @@
 package it.unibo.hermes.client.model.service;
 
 import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.AuthException;
+import it.unibo.hermes.client.infrastructure.exception.AuthException.Reason;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.dto.LoginRequestDto;
 import it.unibo.hermes.client.model.dto.RegisterRequestDto;
@@ -11,6 +13,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Mono;
 
 /**
@@ -43,11 +46,35 @@ public class AuthService {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new RegisterRequestDto(username, password))
                 .retrieve()
-                .onStatus(s -> s.is4xxClientError() || s.is5xxServerError(),
+                .onStatus(s -> s.value() == HttpStatus.CONFLICT.value(),
                         r -> r.bodyToMono(String.class)
-                                .flatMap(body -> Mono.error(
-                                        new RuntimeException("Registration failed: " + body))))
+                                .defaultIfEmpty("")
+                                .flatMap(body -> Mono.error(new AuthException(
+                                        Reason.USERNAME_TAKEN,
+                                        HttpStatus.CONFLICT.value(),
+                                        formatMessage("Registration failed", body)))))
+                .onStatus(HttpStatusCode::is4xxClientError,
+                        r -> r.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .flatMap(body -> Mono.error(new AuthException(
+                                        Reason.BAD_REQUEST,
+                                        r.statusCode().value(),
+                                        formatMessage("Registration failed", body)))))
+                .onStatus(s -> s.value() == HttpStatus.SERVICE_UNAVAILABLE.value(),
+                        r -> Mono.error(new AuthException(
+                                Reason.SERVICE_UNAVAILABLE,
+                                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                                "Registration failed: service unavailable")))
+                .onStatus(HttpStatusCode::is5xxServerError,
+                        r -> r.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .flatMap(body -> Mono.error(new AuthException(
+                                        Reason.SERVER_ERROR,
+                                        r.statusCode().value(),
+                                        formatMessage("Registration failed", body)))))
                 .bodyToMono(Void.class)
+                .onErrorMap(WebClientRequestException.class,
+                        e -> new AuthException(Reason.NETWORK_ERROR, 0, "Cannot reach the server", e))
                 .doOnSuccess(v -> log.info("Registration successful for {}", username))
                 .doOnError(e -> log.warn("Registration error: {}", e.getMessage()));
     }
@@ -67,12 +94,30 @@ public class AuthService {
                 .bodyValue(new LoginRequestDto(username, password))
                 .retrieve()
                 .onStatus(s -> s.value() == HttpStatus.UNAUTHORIZED.value(),
-                        r -> Mono.error(new RuntimeException("Invalid credentials")))
+                        r -> Mono.error(new AuthException(
+                                Reason.INVALID_CREDENTIALS,
+                                HttpStatus.UNAUTHORIZED.value(),
+                                "Invalid credentials")))
+                .onStatus(s -> s.value() == HttpStatus.SERVICE_UNAVAILABLE.value(),
+                        r -> Mono.error(new AuthException(
+                                Reason.SERVICE_UNAVAILABLE,
+                                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                                "Server error: service unavailable")))
                 .onStatus(HttpStatusCode::is5xxServerError,
                         r -> r.bodyToMono(String.class)
-                                .flatMap(b -> Mono.error(new RuntimeException("Server error: " + b))))
+                                .defaultIfEmpty("")
+                                .flatMap(body -> Mono.error(new AuthException(
+                                        Reason.SERVER_ERROR,
+                                        r.statusCode().value(),
+                                        formatMessage("Server error", body)))))
                 .bodyToMono(AuthResponseDto.class)
+                .onErrorMap(WebClientRequestException.class,
+                        e -> new AuthException(Reason.NETWORK_ERROR, 0, "Cannot reach the server", e))
                 .doOnSuccess(r -> log.info("Login successful, username={}", r.username()))
                 .doOnError(e -> log.warn("Login error: {}", e.getMessage()));
+    }
+
+    private String formatMessage(String prefix, String body) {
+        return (body == null || body.isBlank()) ? prefix : prefix + ": " + body;
     }
 }

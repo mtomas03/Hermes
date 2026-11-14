@@ -8,7 +8,7 @@ import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.client.model.dto.ConversationDto;
 import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.SyncResponseDto;
-import it.unibo.hermes.client.model.repository.PersistenceException;
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -154,13 +154,13 @@ class SyncServiceTest {
     @Test
     void applySyncDoesNotAcknowledgeAndPropagatesErrorWhenLocalPersistenceFails() {
         SyncService service = createSyncService();
-        doThrow(new PersistenceException("DB write failed", new SQLException()))
+        doThrow(new SQLitePersistenceException("DB write failed", new SQLException()))
                 .when(persistence).saveMessagesBatch(anyList());
 
         SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(
                 createInboundMessage("m1", "bob", "alice", MessageStatus.STORED.name())));
 
-        assertThrows(PersistenceException.class, () -> service.applySync(response, "alice"));
+        assertThrows(SQLitePersistenceException.class, () -> service.applySync(response, "alice"));
 
         verifyNoInteractions(webSocketService);
         verify(persistence, never()).updateMessageStatusesBatch(any(), any());

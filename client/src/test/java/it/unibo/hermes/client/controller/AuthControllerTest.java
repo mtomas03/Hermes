@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.controller;
 
+import it.unibo.hermes.client.infrastructure.exception.AuthException;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
@@ -16,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
+import java.net.ConnectException;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -83,7 +85,8 @@ class AuthControllerTest {
     @Test
     void failedLoginWithInvalidCredentialsShouldReportFriendlyMessage() {
         when(authService.login("alice", "wrong"))
-                .thenReturn(Mono.error(new RuntimeException("Invalid credentials")));
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.INVALID_CREDENTIALS, 401, "Invalid credentials")));
 
         controller.login("alice", "wrong", onError);
 
@@ -94,7 +97,9 @@ class AuthControllerTest {
     @Test
     void loginFailureDueToConnectivityShouldReportServerUnreachable() {
         when(authService.login("alice", "secret"))
-                .thenReturn(Mono.error(new RuntimeException("Connection refused")));
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.NETWORK_ERROR, 0, "Cannot reach server",
+                        new ConnectException("Connection refused"))));
 
         controller.login("alice", "secret", onError);
 
@@ -241,5 +246,41 @@ class AuthControllerTest {
         order.verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
         order.verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
         order.verify(messageService, timeout(ASYNC_TIMEOUT_MS)).resetClocks();
+    }
+
+    @Test
+    void failedRegistrationWithConflictShouldReportUsernameTaken() {
+        when(authService.register("taken", "password123"))
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.USERNAME_TAKEN, 409, "Registration failed")));
+        Runnable onSuccess = mock(Runnable.class);
+
+        controller.register("taken", "password123", onSuccess, onError);
+
+        verify(onError, timeout(ASYNC_TIMEOUT_MS)).accept("This username is already taken.");
+        verifyNoInteractions(onSuccess);
+    }
+
+    @Test
+    void failedLoginWithServiceUnavailableShouldReportTemporaryUnavailability() {
+        when(authService.login("alice", "secret"))
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.SERVICE_UNAVAILABLE, 503, "Service unavailable")));
+
+        controller.login("alice", "secret", onError);
+
+        verify(onError, timeout(ASYNC_TIMEOUT_MS))
+                .accept("The service is temporarily unavailable. Please try again later.");
+    }
+
+    @Test
+    void restoreSessionShouldHandlePersistenceFailureWithoutThrowing() {
+        when(persistence.loadValidAuthToken()).thenThrow(new RuntimeException("corrupt sqlite db"));
+
+        assertFalse(controller.restoreSession());
+
+        verify(stateModel).setAuthState(AuthState.UNAUTHENTICATED);
+        verify(stateModel).setStatusMessage("Session restore failed");
+        verifyNoInteractions(connectionController);
     }
 }

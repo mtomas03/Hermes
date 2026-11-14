@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.repository;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.User;
 import org.slf4j.Logger;
@@ -72,7 +73,7 @@ public class ConversationRepository {
             ps.executeBatch();
         } catch (SQLException e) {
             log.error("Failed to batch upsert {} conversations", conversations.size(), e);
-            throw new PersistenceException("Failed to batch upsert conversations", e);
+            throw new SQLitePersistenceException("Failed to batch upsert conversations", e);
         }
     }
 

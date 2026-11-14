@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.repository.*;
 import org.junit.jupiter.api.BeforeEach;
@@ -244,10 +245,10 @@ class LocalPersistenceServiceTest {
 
     @Test
     void updatingMessageStatusShouldPropagatePersistenceException() {
-        doThrow(new PersistenceException("db error", new SQLException("locked")))
+        doThrow(new SQLitePersistenceException("db error", new SQLException("locked")))
                 .when(messageRepository).updateStatus("m1", MessageStatus.ACKNOWLEDGED);
 
-        assertThrows(PersistenceException.class,
+        assertThrows(SQLitePersistenceException.class,
                 () -> service.updateMessageStatus("m1", MessageStatus.ACKNOWLEDGED));
     }
 }

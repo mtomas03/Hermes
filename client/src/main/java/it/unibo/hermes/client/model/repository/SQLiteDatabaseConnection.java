@@ -1,6 +1,7 @@
 package it.unibo.hermes.client.model.repository;
 
 import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -100,7 +101,7 @@ public class SQLiteDatabaseConnection {
                 conn.setAutoCommit(previousAutoCommit);
             }
         } catch (SQLException e) {
-            throw new PersistenceException("Database transaction failed", e);
+            throw new SQLitePersistenceException("Database transaction failed", e);
         }
     }
 

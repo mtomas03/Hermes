@@ -14,6 +14,7 @@ import it.unibo.hermes.client.model.service.MessageService;
 import it.unibo.hermes.client.model.service.WebSocketService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.model.state.ConnectionState;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -139,6 +140,12 @@ public class ConnectionController {
         msgService.resetClocks();
         stateModel.setConnectionState(ConnectionState.DISCONNECTED);
         stateModel.setStatusMessage("Disconnected");
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        disconnect();
+        scheduler.shutdownNow();
     }
 
     private void handleInboundMessage(InboundMessageDto dto, long gen) {

@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.repository;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
 import org.slf4j.Logger;
@@ -83,7 +84,7 @@ public class MessageRepository {
             ps.executeBatch();
         } catch (SQLException e) {
             log.error("Failed to batch upsert {} messages", messages.size(), e);
-            throw new PersistenceException("Failed to batch upsert messages", e);
+            throw new SQLitePersistenceException("Failed to batch upsert messages", e);
         }
     }
 
@@ -127,7 +128,7 @@ public class MessageRepository {
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update status for message {}", messageId, e);
-            throw new PersistenceException("Failed to update status for message " + messageId, e);
+            throw new SQLitePersistenceException("Failed to update status for message " + messageId, e);
         }
     }
 
@@ -232,13 +233,12 @@ public class MessageRepository {
     }
 
     /**
-     * Increments and returns the delivery attempt count
+     * Increments the delivery attempt count
      * for a {@code PENDING} message.
      *
      * @param messageId the identifier of the message
-     * @return the updated attempt count
      */
-    public int incrementDeliveryAttempts(String messageId) {
+    public void incrementDeliveryAttempts(String messageId) {
         String updateSql = """
                 UPDATE message
                 SET delivery_attempts = delivery_attempts + 1
@@ -251,7 +251,6 @@ public class MessageRepository {
         } catch (SQLException e) {
             log.error("Failed to increment delivery attempts for message {}", messageId, e);
         }
-        return getDeliveryAttempts(messageId);
     }
 
     /**
@@ -289,7 +288,7 @@ public class MessageRepository {
             ps.executeBatch();
         } catch (SQLException e) {
             log.error("Failed to batch update status to {} for {} messages", status, messageIds.size(), e);
-            throw new PersistenceException("Failed to batch update message statuses", e);
+            throw new SQLitePersistenceException("Failed to batch update message statuses", e);
         }
     }
 

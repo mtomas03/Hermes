@@ -400,4 +400,12 @@ class ConnectionControllerTest {
         onDisconnected.run();
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConnectionState(ConnectionState.FAILED);
     }
+
+    @Test
+    void shutdownShouldDisconnectWebSocket() {
+        controller.shutdown();
+
+        verify(wsService).disconnect();
+        verify(stateModel).setConnectionState(ConnectionState.DISCONNECTED);
+    }
 }

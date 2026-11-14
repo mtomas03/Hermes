@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.controller;
 
+import it.unibo.hermes.client.infrastructure.exception.AuthException;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
@@ -8,19 +9,28 @@ import it.unibo.hermes.client.model.service.LocalPersistenceService;
 import it.unibo.hermes.client.model.service.MessageService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.Exceptions;
 import reactor.core.scheduler.Schedulers;
 
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.time.Instant;
-import java.util.Optional;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
@@ -154,19 +164,34 @@ public class AuthController {
      * @return {@code true} if a session was restored
      */
     public boolean restoreSession() {
-        Optional<AuthToken> token = persistence.loadValidAuthToken();
-        if (token.isEmpty()) {
+        try {
+            Optional<AuthToken> token = persistence.loadValidAuthToken();
+            if (token.isEmpty()) {
+                return false;
+            }
+            Optional<User> user = persistence.loadLocalUser();
+            if (user.isEmpty()) {
+                persistence.clearAuthToken();
+                return false;
+            }
+            log.info("Restoring session for {}", user.get().username());
+            startSession(token.get(), user.get());
+            stateModel.setStatusMessage("Session restored");
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to restore previous session", e);
+            stateModel.setAuthState(AuthState.UNAUTHENTICATED);
+            stateModel.setStatusMessage("Session restore failed");
             return false;
         }
-        Optional<User> user = persistence.loadLocalUser();
-        if (user.isEmpty()) {
-            persistence.clearAuthToken();
-            return false;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        if (expirationAuthTokenTask != null) {
+            expirationAuthTokenTask.cancel(false);
         }
-        log.info("Restoring session for {}", user.get().username());
-        startSession(token.get(), user.get());
-        stateModel.setStatusMessage("Session restored");
-        return true;
+        scheduler.shutdownNow();
     }
 
     private void handleLoginSuccess(AuthResponseDto resp) {
@@ -230,16 +255,71 @@ public class AuthController {
     }
 
     private String userFriendlyError(Throwable e) {
-        String msg = e.getMessage();
-        if (msg == null) return "Unknown error.";
-        if (msg.contains("503"))
-            return "The service is temporarily unavailable. Please try again shortly.";
-        if (msg.contains("409"))
-            return "This username is already taken.";
-        if (msg.contains("Invalid credentials") || msg.contains("401"))
-            return "Invalid username or password.";
-        if (msg.contains("connect") || msg.contains("refused"))
+        if (e == null) {
+            return "Unknown error.";
+        }
+        Throwable cause = Exceptions.unwrap(e);
+
+        if (cause instanceof AuthException authEx) {
+            return switch (authEx.getReason()) {
+                case SERVICE_UNAVAILABLE -> "The service is temporarily unavailable. Please try again later.";
+                case USERNAME_TAKEN -> "This username is already taken.";
+                case INVALID_CREDENTIALS -> "Invalid username or password.";
+                case NETWORK_ERROR -> "Cannot reach the server. Check your connection.";
+                case BAD_REQUEST -> getAuthExceptionDetails(authEx);
+                case SERVER_ERROR -> "A server error occurred. Please try again later.";
+            };
+        }
+
+        if (cause instanceof WebClientResponseException responseEx) {
+            int status = responseEx.getStatusCode().value();
+            if (status == HttpStatus.SERVICE_UNAVAILABLE.value()) {
+                return "The service is temporarily unavailable. Please try again later.";
+            }
+            if (status == HttpStatus.CONFLICT.value()) {
+                return "This username is already taken.";
+            }
+            if (status == HttpStatus.UNAUTHORIZED.value()) {
+                return "Invalid username or password.";
+            }
+            if (responseEx.getStatusCode().is5xxServerError()) {
+                return "A server error occurred. Please try again later.";
+            }
+            return "Request failed (" + status + ").";
+        }
+
+        if (cause instanceof WebClientRequestException
+                || hasCause(cause, ConnectException.class)
+                || hasCause(cause, UnknownHostException.class)
+                || hasCause(cause, SocketTimeoutException.class)
+                || hasCause(cause, TimeoutException.class)) {
             return "Cannot reach the server. Check your connection.";
-        return msg;
+        }
+
+        return cause.getMessage() != null ? cause.getMessage() : "Unknown error.";
+    }
+
+    private boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private String getAuthExceptionDetails(AuthException authEx) {
+        String result;
+        String message = authEx.getMessage();
+        if (message == null || message.isBlank()) {
+            result = "Invalid registration details.";
+        } else if (message.startsWith("Registration failed: ") && message.length() > "Registration failed: ".length()) {
+            result = message.substring("Registration failed: ".length());
+        } else {
+            result = message;
+        }
+        return result;
     }
 }

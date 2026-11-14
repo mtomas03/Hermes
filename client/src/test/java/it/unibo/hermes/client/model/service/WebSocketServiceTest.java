@@ -178,6 +178,17 @@ class WebSocketServiceTest {
         verify(onDisconnectedAction, never()).run();
     }
 
+    @Test
+    void shutdownShouldDisconnectActiveStompSession() {
+        when(stompSession.isConnected()).thenReturn(true);
+        connectWith(stompSession);
+
+        service.shutdown();
+
+        verify(stompSession).disconnect();
+        assertFalse(service.isConnected());
+    }
+
     private OutboundMessageDto createOutboundMessage() {
         return new OutboundMessageDto(
                 "m1", "alice-bob",
