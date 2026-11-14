@@ -143,14 +143,14 @@ public class SyncController {
     public void refreshActiveMessages(String conversationId) {
         long gen = syncGeneration.get();
         Schedulers.boundedElastic().schedule(() -> {
-            if (syncGeneration.get() != gen) {
+            if (syncGeneration.get() != gen || isConversationNotSelected(conversationId)) {
                 return;
             }
             List<Message> messages = persistence.loadMessages(conversationId);
-            if (syncGeneration.get() != gen) {
+            if (syncGeneration.get() != gen || isConversationNotSelected(conversationId)) {
                 return;
             }
-            stateModel.replaceMessages(messages);
+            stateModel.mergeMessages(messages);
         });
     }
 
@@ -268,6 +268,11 @@ public class SyncController {
     private boolean isSessionActive(long expectedGen, User expectedUser) {
         return syncGeneration.get() == expectedGen
                 && Objects.equals(expectedUser, stateModel.getCurrentUser());
+    }
+
+    private boolean isConversationNotSelected(String conversationId) {
+        Conversation selected = stateModel.getSelectedConversation();
+        return selected == null || !conversationId.equals(selected.conversationId());
     }
 
     private record SyncResult(String conversationId, int messageCount) {

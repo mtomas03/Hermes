@@ -89,7 +89,7 @@ class SyncControllerTest {
 
         verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse, "alice");
         verify(persistence, timeout(ASYNC_TIMEOUT_MS)).loadMessages("alice-bob");
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(anyList());
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).mergeMessages(anyList());
     }
 
     @Test
@@ -125,14 +125,18 @@ class SyncControllerTest {
 
     @Test
     void refreshActiveMessagesShouldReloadFromLocalPersistence() {
+        when(stateModel.getSelectedConversation())
+                .thenReturn(new Conversation(
+                        "alice-bob", new User("bob")));
         Message msg = new Message(
-                "m1", "alice-bob", "alice", "bob",
+                "m1", "alice-bob",
+                "alice", "bob",
                 "hi", 1L, MessageStatus.SENT);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(msg));
 
         controller.refreshActiveMessages("alice-bob");
 
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(List.of(msg));
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).mergeMessages(List.of(msg));
     }
 
     @Test
@@ -176,5 +180,39 @@ class SyncControllerTest {
                 "alice-bob", "alice", "bob")));
 
         verify(persistence, never()).saveConversation(any());
+    }
+
+    @Test
+    void refreshActiveMessagesMergesLoadedMessagesWhenConversationIsStillSelected() {
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
+        Message m1 = new Message(
+                "m1", "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
+        when(stateModel.getSelectedConversation()).thenReturn(conv);
+        when(persistence.loadMessages("alice-bob"))
+                .thenReturn(List.of(m1));
+
+        controller.refreshActiveMessages("alice-bob");
+
+        verify(stateModel, timeout(2000)).mergeMessages(List.of(m1));
+        verify(stateModel, never()).replaceMessages(any());
+    }
+
+    @Test
+    void refreshActiveMessagesDiscardsStaleLoadIfSelectedConversationChanged() {
+        Conversation convA = new Conversation("alice-bob", new User("bob"));
+        Conversation convB = new Conversation("alice-charlie", new User("charlie"));
+        when(stateModel.getSelectedConversation()).thenReturn(convA, convB);
+        when(persistence.loadMessages("alice-bob")).thenReturn(List.of(
+                new Message(
+                        "m1", "alice-bob", 
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.SENT)));
+
+        controller.refreshActiveMessages("alice-bob");
+
+        verify(stateModel, after(300).never()).mergeMessages(any());
+        verify(stateModel, never()).replaceMessages(any());
     }
 }
