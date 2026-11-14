@@ -63,6 +63,15 @@ public class AppProperties {
     @Value("${hermes.client.heartbeat-interval-ms:10000}")
     private long heartbeatIntervalMs;
 
+    @Value("${hermes.client.max-message-length:4096}")
+    private int maxMessageLength = 4096;
+
+    @Value("${hermes.client.max-delivery-attempts:3}")
+    private int maxDeliveryAttempts = 3;
+
+    @Value("${hermes.client.stable-connection-ms:5000}")
+    private long stableConnectionMs = 5000L;
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -133,5 +142,17 @@ public class AppProperties {
 
     public long getHeartbeatIntervalMs() {
         return heartbeatIntervalMs;
+    }
+
+    public int getMaxMessageLength() {
+        return maxMessageLength;
+    }
+
+    public int getMaxDeliveryAttempts() {
+        return maxDeliveryAttempts;
+    }
+
+    public long getStableConnectionMs() {
+        return stableConnectionMs;
     }
 }

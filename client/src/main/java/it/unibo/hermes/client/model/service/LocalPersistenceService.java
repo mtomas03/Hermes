@@ -145,6 +145,28 @@ public class LocalPersistenceService {
     }
 
     /**
+     * Returns the number of delivery attempts recorded
+     * for a {@code PENDING} message.
+     *
+     * @param messageId the identifier of the message
+     * @return the number of attempts
+     */
+    public int getDeliveryAttempts(String messageId) {
+        return messageRepository.getDeliveryAttempts(messageId);
+    }
+
+    /**
+     * Increments and returns the delivery attempt count
+     * for a {@code PENDING} message.
+     *
+     * @param messageId the identifier of the message
+     * @return the updated attempt count
+     */
+    public int incrementDeliveryAttempts(String messageId) {
+        return messageRepository.incrementDeliveryAttempts(messageId);
+    }
+
+    /**
      * Deletes every persisted token.
      */
     public void clearAuthToken() {

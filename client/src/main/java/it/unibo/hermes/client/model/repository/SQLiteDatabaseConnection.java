@@ -76,6 +76,7 @@ public class SQLiteDatabaseConnection {
                         content            TEXT NOT NULL,
                         logical_timestamp  INTEGER NOT NULL DEFAULT 0,
                         status             TEXT NOT NULL DEFAULT 'PENDING',
+                        delivery_attempts  INTEGER NOT NULL DEFAULT 0,
                         FOREIGN KEY (conversation_id) REFERENCES conversation(conversation_id)
                     )""");
 

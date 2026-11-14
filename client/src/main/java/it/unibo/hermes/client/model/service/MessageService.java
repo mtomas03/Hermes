@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -7,6 +8,7 @@ import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.OutboundMessageDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
@@ -26,13 +28,22 @@ public class MessageService {
 
     private final WebSocketService wsService;
     private final LocalPersistenceService persistenceService;
+    private final AppProperties props;
     private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
     private final AtomicBoolean flushAgain = new AtomicBoolean(false);
 
     public MessageService(WebSocketService wsService, LocalPersistenceService persistenceService) {
+        this(wsService, persistenceService, new AppProperties());
+    }
+
+    @Autowired
+    public MessageService(WebSocketService wsService,
+                          LocalPersistenceService persistenceService,
+                          AppProperties props) {
         this.wsService = wsService;
         this.persistenceService = persistenceService;
+        this.props = props != null ? props : new AppProperties();
     }
 
     /**
@@ -52,6 +63,12 @@ public class MessageService {
                         String conversationId,
                         String recipientUsername,
                         String content) {
+        int maxMessageLength = props.getMaxMessageLength();
+        if (maxMessageLength > 0 && content != null && content.length() > maxMessageLength) {
+            throw new IllegalArgumentException(
+                    "Message content exceeds maximum length of " + maxMessageLength + " characters");
+        }
+
         AtomicLong clock = getConversationClock(conversationId);
         long currentClock = clock.incrementAndGet();
 
@@ -96,8 +113,25 @@ public class MessageService {
             do {
                 flushAgain.set(false);
                 int passSubmitted = 0;
+                int maxMessageLength = props.getMaxMessageLength();
+                int maxAttempts = props.getMaxDeliveryAttempts();
 
                 for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
+                    if (maxMessageLength > 0 && pending.getContent().length() > maxMessageLength) {
+                        log.error("Isolating oversized message {} ({} chars > max {}): marking FAILED",
+                                pending.getMessageId(), pending.getContent().length(), maxMessageLength);
+                        markRejected(pending.getMessageId());
+                        continue;
+                    }
+
+                    int priorAttempts = persistenceService.getDeliveryAttempts(pending.getMessageId());
+                    if (maxAttempts > 0 && priorAttempts >= maxAttempts) {
+                        log.error("Poison message {} exceeded max delivery attempts ({}/{}): marking FAILED",
+                                pending.getMessageId(), priorAttempts, maxAttempts);
+                        markRejected(pending.getMessageId());
+                        continue;
+                    }
+
                     if (!transmit(pending)) {
                         log.warn("Outbox flush interrupted at message {}: {} submitted this pass",
                                 pending.getMessageId(), passSubmitted);
@@ -105,6 +139,7 @@ public class MessageService {
                         isFlushing.set(false);
                         return totalSubmitted + passSubmitted;
                     }
+                    persistenceService.incrementDeliveryAttempts(pending.getMessageId());
                     passSubmitted++;
                 }
                 totalSubmitted += passSubmitted;

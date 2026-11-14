@@ -182,6 +182,51 @@ public class MessageRepository {
     }
 
     /**
+     * Returns how many times a message has been attempted to be delivered.
+     *
+     * @param messageId the identifier of the message
+     * @return the number of recorded delivery attempts, or 0 if not found
+     */
+    public int getDeliveryAttempts(String messageId) {
+        String sql = "SELECT delivery_attempts FROM message WHERE message_id = ?";
+        try (Connection conn = db.getDataSource().getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, messageId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("delivery_attempts");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to read delivery attempts for message {}", messageId, e);
+        }
+        return 0;
+    }
+
+    /**
+     * Increments and returns the delivery attempt count
+     * for a {@code PENDING} message.
+     *
+     * @param messageId the identifier of the message
+     * @return the updated attempt count
+     */
+    public int incrementDeliveryAttempts(String messageId) {
+        String updateSql = """
+                UPDATE message
+                SET delivery_attempts = delivery_attempts + 1
+                WHERE message_id = ? AND status = 'PENDING'
+                """;
+        try (Connection conn = db.getDataSource().getConnection();
+             PreparedStatement ps = conn.prepareStatement(updateSql)) {
+            ps.setString(1, messageId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to increment delivery attempts for message {}", messageId, e);
+        }
+        return getDeliveryAttempts(messageId);
+    }
+
+    /**
      * Clears all messages from the database.
      */
     public void clear() {

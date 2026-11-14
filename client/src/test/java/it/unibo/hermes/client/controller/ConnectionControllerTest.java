@@ -369,4 +369,35 @@ class ConnectionControllerTest {
         verify(msgService).resetClocks();
         verify(msgService, never()).acknowledgeDelivery(any());
     }
+
+    @Test
+    void immediateDisconnectAfterConnectDoesNotResetRetryCountAndStopsAtMaxAttempts() {
+        ReflectionTestUtils.setField(props, "reconnectMaxAttempts", 2);
+        ReflectionTestUtils.setField(props, "reconnectBaseDelayMs", 5L);
+        ReflectionTestUtils.setField(props, "reconnectMaxDelayMs", 20L);
+        ReflectionTestUtils.setField(props, "stableConnectionMs", 10_000L);
+
+        controller.connect("token123");
+        verify(wsService).setOnConnected(runnableCaptor.capture());
+        Runnable onConnected = runnableCaptor.getValue();
+        verify(wsService).setOnDisconnected(runnableCaptor.capture());
+        Runnable onDisconnected = runnableCaptor.getValue();
+
+        // Cycle 1: connect -> drop (attempt 1)
+        onConnected.run();
+        onDisconnected.run();
+        verify(wsService, timeout(ASYNC_TIMEOUT_MS).times(2))
+                .connect("token123");
+
+        // Cycle 2: connect -> drop (attempt 2)
+        onConnected.run();
+        onDisconnected.run();
+        verify(wsService, timeout(ASYNC_TIMEOUT_MS).times(3))
+                .connect("token123");
+
+        // Cycle 3: connect -> drop (attempt 3 > maxAttempts=2 -> FAILED)
+        onConnected.run();
+        onDisconnected.run();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConnectionState(ConnectionState.FAILED);
+    }
 }

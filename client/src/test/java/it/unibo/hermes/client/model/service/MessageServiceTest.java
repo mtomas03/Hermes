@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -12,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -385,6 +387,60 @@ class MessageServiceTest {
         verify(persistence).updateMessageStatus("m1", MessageStatus.STORED);
         verify(persistence).updateMessageStatus("m2", MessageStatus.DELIVERED);
         verify(persistence).updateMessageStatus("m3", MessageStatus.FAILED);
+    }
+
+    @Test
+    void sendShouldRejectContentExceedingConfiguredMaxLength() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxMessageLength", 5);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> messageService.send(
+                        "alice", "alice-bob",
+                        "bob", "exceeding content"));
+
+        verify(persistence, never()).saveMessage(any());
+        verifyNoInteractions(wsService);
+    }
+
+    @Test
+    void flushOutboxShouldIsolatePoisonMessageAfterMaxDeliveryAttempts() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxDeliveryAttempts", 2);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        Message poison = createPendingMessage("poison1", 1L);
+        when(persistence.loadPendingOutbound("alice"))
+                .thenReturn(List.of(poison));
+        when(persistence.getDeliveryAttempts("poison1"))
+                .thenReturn(0, 1, 2);
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+        assertEquals(1, messageService.flushOutbox("alice"));
+        assertEquals(0, messageService.flushOutbox("alice"));
+
+        verify(wsService, times(2)).sendMessage(any());
+        verify(persistence, times(2))
+                .incrementDeliveryAttempts("poison1");
+        verify(persistence).updateMessageStatus("poison1", MessageStatus.FAILED);
+    }
+
+    @Test
+    void flushOutboxShouldMarkOversizedStoredMessageAsFailedWithoutTransmitting() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxMessageLength", 4);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        Message oversized = createPendingMessage("big1", 1L);
+        when(persistence.loadPendingOutbound("alice"))
+                .thenReturn(List.of(oversized));
+
+        assertEquals(0, messageService.flushOutbox("alice"));
+
+        verifyNoInteractions(wsService);
+        verify(persistence).updateMessageStatus("big1", MessageStatus.FAILED);
     }
 
     private Message createPendingMessage(String messageId, long logicalTimestamp) {

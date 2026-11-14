@@ -36,7 +36,8 @@ public class ConnectionController {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionController.class);
     private static final Set<String> PERMANENT_REJECTIONS =
-            Set.of("MISSING_RECIPIENT", "MISSING_CONTENT", "SELF_SEND", "INVALID_CONVERSATION");
+            Set.of("MISSING_RECIPIENT", "MISSING_CONTENT", "SELF_SEND",
+                    "INVALID_CONVERSATION", "MESSAGE_TOO_LARGE", "PAYLOAD_TOO_LARGE");
 
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -53,6 +54,7 @@ public class ConnectionController {
     private final AtomicLong sessionGeneration = new AtomicLong(0);
     private final Object sessionLock = new Object();
     private volatile ScheduledFuture<?> pending = null;
+    private volatile ScheduledFuture<?> pendingRetryReset = null;
     private volatile String currentToken;
     private volatile Runnable onConnectedCallback = () -> {
     };
@@ -80,6 +82,7 @@ public class ConnectionController {
         long gen;
         synchronized (sessionLock) {
             cancelPending();
+            cancelPendingRetryReset();
             this.currentToken = rawToken;
             gen = sessionGeneration.incrementAndGet();
         }
@@ -89,7 +92,7 @@ public class ConnectionController {
                 return;
             }
             log.info("WebSocket connected");
-            retryCount.set(0);
+            scheduleRetryCountReset(gen);
             stateModel.setConnectionState(ConnectionState.CONNECTED);
             stateModel.setStatusMessage("Online");
             onConnectedCallback.run();
@@ -108,6 +111,7 @@ public class ConnectionController {
             if (!isSessionActive(gen)) {
                 return;
             }
+            cancelPendingRetryReset();
             log.info("WebSocket disconnected");
             stateModel.setConnectionState(ConnectionState.DISCONNECTED);
             stateModel.setStatusMessage("Offline");
@@ -127,6 +131,8 @@ public class ConnectionController {
         synchronized (sessionLock) {
             sessionGeneration.incrementAndGet();
             cancelPending();
+            cancelPendingRetryReset();
+            retryCount.set(0);
             this.currentToken = null;
             wsService.disconnect();
         }
@@ -281,6 +287,28 @@ public class ConnectionController {
     private void cancelPending() {
         if (pending != null && !pending.isDone()) {
             pending.cancel(false);
+        }
+    }
+
+    private void scheduleRetryCountReset(long gen) {
+        cancelPendingRetryReset();
+        long stabilityMs = Math.max(0L, props.getStableConnectionMs());
+        if (stabilityMs == 0L) {
+            retryCount.set(0);
+            return;
+        }
+        pendingRetryReset = scheduler.schedule(() -> {
+            if (isSessionActive(gen)) {
+                retryCount.set(0);
+                log.debug("Connection remained stable for {} ms; " +
+                        "reconnect counter reset", stabilityMs);
+            }
+        }, stabilityMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelPendingRetryReset() {
+        if (pendingRetryReset != null && !pendingRetryReset.isDone()) {
+            pendingRetryReset.cancel(false);
         }
     }
 }
