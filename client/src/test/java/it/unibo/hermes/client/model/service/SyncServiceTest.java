@@ -234,6 +234,37 @@ class SyncServiceTest {
                 .verifyComplete();
     }
 
+    @Test
+    void applySyncMapsDeliveringAndDeliveredExplicitlyInsteadOfStored() {
+        SyncService service = serviceWithPersistenceResult(true);
+        SyncResponseDto response = new SyncResponseDto("alice-bob", List.of(
+                createInboundMessage(
+                        "m1", "alice", "bob", "DELIVERING"),
+                createInboundMessage(
+                        "m2", "alice", "bob", "DELIVERED")));
+
+        service.applySync(response, "alice");
+
+        ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
+        verify(persistence, times(2)).saveMessage(captor.capture());
+        assertEquals(MessageStatus.DELIVERING, captor.getAllValues().get(0).getStatus());
+        assertEquals(MessageStatus.DELIVERED, captor.getAllValues().get(1).getStatus());
+    }
+
+    @Test
+    void applySyncDoesNotReAcknowledgeMessagesAlreadyDeliveredOnServer() {
+        SyncService service = serviceWithPersistenceResult(true);
+
+        service.applySync(new SyncResponseDto(
+                "alice-bob",
+                        List.of(createInboundMessage(
+                        "m1", "bob", "alice", "DELIVERED"))),
+                "alice");
+
+        verifyNoInteractions(webSocketService);
+        verify(persistence, never()).updateMessageStatus(any(), any());
+    }
+
     private SyncService serviceWithPersistenceResult(boolean persisted) {
         when(persistence.saveMessage(any(Message.class))).thenReturn(persisted);
         return new SyncService(WebClient.create(), props, persistence, messageService, webSocketService);

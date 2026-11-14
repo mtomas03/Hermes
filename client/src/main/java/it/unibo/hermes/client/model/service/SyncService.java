@@ -113,27 +113,29 @@ public class SyncService {
                 continue;
             }
 
-            if (needsAcknowledgement(dto, localUsername)) {
+            if (needsAcknowledgement(dto, localUsername, serverMessageStatus)) {
                 webSocketService.sendAck(dto.messageId());
                 persistence.updateMessageStatus(dto.messageId(), MessageStatus.ACKNOWLEDGED);
             }
         }
     }
 
-    private MessageStatus parseStatus(String statusStr) {
-        if (statusStr == null || statusStr.isBlank()) {
-            return MessageStatus.STORED;
-        }
-        try {
-            return MessageStatus.valueOf(statusStr.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return MessageStatus.STORED;
-        }
+    private MessageStatus parseStatus(String messageStatus) {
+        return MessageStatus.fromServerStatus(messageStatus)
+                .orElseGet(() -> {
+                    if (messageStatus != null && !messageStatus.isBlank()) {
+                        log.warn("Unrecognised server message status '{}', defaulting to STORED", messageStatus);
+                    }
+                    return MessageStatus.STORED;
+                });
     }
 
-    private boolean needsAcknowledgement(InboundMessageDto dto, String localUsername) {
+    private boolean needsAcknowledgement(InboundMessageDto dto,
+                                         String localUsername,
+                                         MessageStatus parsedStatus) {
         return localUsername != null
                 && localUsername.equalsIgnoreCase(dto.recipientUsername())
-                && !MessageStatus.ACKNOWLEDGED.name().equalsIgnoreCase(dto.messageStatus());
+                && parsedStatus != MessageStatus.DELIVERED
+                && parsedStatus != MessageStatus.ACKNOWLEDGED;
     }
 }

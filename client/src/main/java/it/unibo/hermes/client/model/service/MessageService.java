@@ -124,16 +124,21 @@ public class MessageService {
     }
 
     /**
-     * Converts an inbound DTO received from the server into a domain Message and persists it.
+     * Converts an inbound message DTO, received from the server,
+     * into a domain message and persists it.
      *
      * @param dto the inbound message DTO
-     * @return the persisted Message entity
+     * @return the persisted domain message entity
      * @throws MessagePersistenceException if the message could not be persisted
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
         AtomicLong clock = getConversationClock(dto.conversationId());
         long msgClock = dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L;
         clock.updateAndGet(current -> Math.max(current, msgClock) + 1);
+
+        MessageStatus initialStatus = MessageStatus
+                .fromServerStatus(dto.messageStatus())
+                .orElse(MessageStatus.STORED);
 
         Message msg = new Message(
                 dto.messageId(),
@@ -142,7 +147,7 @@ public class MessageService {
                 dto.recipientUsername(),
                 dto.content(),
                 dto.logicalTimestamp(),
-                MessageStatus.SENT);
+                initialStatus);
 
         boolean persisted = persistenceService.saveMessage(msg);
         if (!persisted) {
@@ -152,12 +157,41 @@ public class MessageService {
     }
 
     /**
+     * Updates the delivery status of an outbound message based on the status reported
+     * by the server in {@code AckDto}, defaulting to {@link MessageStatus#SENT} if omitted.
+     *
+     * @param messageId    the unique identifier of the message to acknowledge
+     * @param serverStatus the status string reported by the gateway, may be {@code null}
+     */
+    public void acknowledgeDelivery(String messageId, String serverStatus) {
+        MessageStatus target = MessageStatus
+                .fromServerStatus(serverStatus)
+                .filter(s -> s != MessageStatus.PENDING)
+                .orElse(MessageStatus.SENT);
+        if (target == MessageStatus.FAILED) {
+            markRejected(messageId);
+            return;
+        }
+        persistenceService.updateMessageStatus(messageId, target);
+    }
+
+    /**
      * Acknowledges the delivery of a message by updating its status to {@link MessageStatus#SENT}.
      *
      * @param messageId the unique identifier of the message to acknowledge
      */
     public void acknowledgeDelivery(String messageId) {
-        persistenceService.updateMessageStatus(messageId, MessageStatus.SENT);
+        acknowledgeDelivery(messageId, null);
+    }
+
+    /**
+     * Marks an inbound message as acknowledged
+     * by updating its status to {@link MessageStatus#ACKNOWLEDGED}.
+     *
+     * @param messageId the unique identifier of the acknowledged message
+     */
+    public void markAcknowledged(String messageId) {
+        persistenceService.updateMessageStatus(messageId, MessageStatus.ACKNOWLEDGED);
     }
 
     /**

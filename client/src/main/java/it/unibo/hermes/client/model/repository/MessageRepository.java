@@ -15,6 +15,18 @@ public class MessageRepository {
 
     private static final Logger log = LoggerFactory.getLogger(MessageRepository.class);
 
+    private static final String STATUS_RANK_SQL = """
+            CASE %s
+                WHEN 'PENDING'      THEN 1
+                WHEN 'SENT'         THEN 2
+                WHEN 'STORED'       THEN 3
+                WHEN 'DELIVERING'   THEN 4
+                WHEN 'DELIVERED'    THEN 5
+                WHEN 'ACKNOWLEDGED' THEN 6
+                ELSE 0
+            END
+            """;
+
     private final SQLiteDatabaseConnection db;
 
     public MessageRepository(SQLiteDatabaseConnection db) {
@@ -22,38 +34,7 @@ public class MessageRepository {
     }
 
     /**
-     * Inserts a message if it does not already exist.
-     *
-     * @param msg the message to persist
-     * @return {@code true} if the message is now durably stored,
-     * {@code false} if a database error occurred
-     */
-    public boolean insertIfAbsent(Message msg) {
-        String sql = """
-                INSERT OR IGNORE INTO message
-                    (message_id, conversation_id, sender_username, recipient_username,
-                     content, logical_timestamp, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """;
-        try (Connection conn = db.getDataSource().getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, msg.getMessageId());
-            ps.setString(2, msg.getConversationId());
-            ps.setString(3, msg.getSenderUsername());
-            ps.setString(4, msg.getRecipientUsername());
-            ps.setString(5, msg.getContent());
-            ps.setLong(6, msg.getLogicalTimestamp());
-            ps.setString(7, msg.getStatus().name());
-            ps.executeUpdate();
-            return true;
-        } catch (SQLException e) {
-            log.error("Failed to insert message {}", msg.getMessageId(), e);
-            return false;
-        }
-    }
-
-    /**
-     * Inserts a message if absent or updates its status if it already exists.
+     * Inserts a message if absent or advances its status monotonically if it already exists.
      *
      * @param msg the message to persist or update
      * @return {@code true} if successful, {@code false} otherwise
@@ -65,7 +46,13 @@ public class MessageRepository {
                      content, logical_timestamp, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO UPDATE SET status = excluded.status
-                """;
+                WHERE (message.status = 'PENDING' AND excluded.status = 'FAILED')
+                   OR (message.status <> 'FAILED'
+                       AND excluded.status <> 'FAILED'
+                       AND (%s) > (%s))
+                """.formatted(
+                STATUS_RANK_SQL.formatted("excluded.status"),
+                STATUS_RANK_SQL.formatted("message.status"));
         try (Connection conn = db.getDataSource().getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, msg.getMessageId());
@@ -84,17 +71,32 @@ public class MessageRepository {
     }
 
     /**
-     * Updates the status of a message.
+     * Updates the status of a message
+     * only if the transition is monotonically valid.
      *
      * @param messageId the identifier of the message to update
      * @param status    the new message status to set
      */
     public void updateStatus(String messageId, MessageStatus status) {
-        String sql = "UPDATE message SET status = ? WHERE message_id = ?";
+        String sql = """
+                UPDATE message
+                SET status = ?
+                WHERE message_id = ?
+                  AND ((status = 'PENDING' AND ? = 'FAILED')
+                       OR (status <> 'FAILED'
+                           AND ? <> 'FAILED'
+                           AND (%s) > (%s)))
+                """.formatted(
+                STATUS_RANK_SQL.formatted("?"),
+                STATUS_RANK_SQL.formatted("status"));
+        String nextStatus = status.name();
         try (Connection conn = db.getDataSource().getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, status.name());
+            ps.setString(1, nextStatus);
             ps.setString(2, messageId);
+            ps.setString(3, nextStatus);
+            ps.setString(4, nextStatus);
+            ps.setString(5, nextStatus);
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to update status for message {}", messageId, e);

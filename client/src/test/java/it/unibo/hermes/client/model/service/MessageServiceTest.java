@@ -363,6 +363,30 @@ class MessageServiceTest {
         verify(persistence, times(2)).getLastLogicalTimestamp("alice-bob");
     }
 
+    @Test
+    void receiveAndPersistUsesMappedServerStatusInsteadOfOverloadingSent() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 5L, "DELIVERING");
+
+        Message result = messageService.receiveAndPersist(dto);
+
+        assertEquals(MessageStatus.DELIVERING, result.getStatus());
+        verify(persistence).saveMessage(result);
+    }
+
+    @Test
+    void acknowledgeDeliveryMapsExplicitServerStatuses() {
+        messageService.acknowledgeDelivery("m1", "STORED");
+        messageService.acknowledgeDelivery("m2", "DELIVERED");
+        messageService.acknowledgeDelivery("m3", "FAILED");
+
+        verify(persistence).updateMessageStatus("m1", MessageStatus.STORED);
+        verify(persistence).updateMessageStatus("m2", MessageStatus.DELIVERED);
+        verify(persistence).updateMessageStatus("m3", MessageStatus.FAILED);
+    }
+
     private Message createPendingMessage(String messageId, long logicalTimestamp) {
         return new Message(
                 messageId, "alice-bob",

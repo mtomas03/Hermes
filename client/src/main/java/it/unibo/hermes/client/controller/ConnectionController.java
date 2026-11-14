@@ -4,6 +4,7 @@ import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
+import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AckDto;
 import it.unibo.hermes.client.model.dto.ErrorDto;
@@ -159,13 +160,19 @@ public class ConnectionController {
                 return;
             }
 
+            boolean isRecipient = currentUser == null
+                    || currentUser.username().equalsIgnoreCase(dto.recipientUsername());
+            if (isRecipient && msg.getStatus().canTransitionTo(MessageStatus.ACKNOWLEDGED)) {
+                wsService.sendAck(dto.messageId());
+                msgService.markAcknowledged(dto.messageId());
+                msg.setStatus(MessageStatus.ACKNOWLEDGED);
+            }
+
             // Only update the active message list if this conv is currently open
             Conversation selected = stateModel.getSelectedConversation();
             if (selected != null && selected.conversationId().equals(dto.conversationId())) {
                 stateModel.appendMessage(msg);
             }
-
-            wsService.sendAck(dto.messageId());
         }
     }
 
@@ -176,7 +183,7 @@ public class ConnectionController {
                 return;
             }
             log.debug("ACK for {}: {}", ack.messageId(), ack.status());
-            msgService.acknowledgeDelivery(ack.messageId());
+            msgService.acknowledgeDelivery(ack.messageId(), ack.status());
         }
     }
 

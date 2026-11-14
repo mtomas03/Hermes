@@ -243,6 +243,7 @@ class ConnectionControllerTest {
         verify(msgService).receiveAndPersist(dto);
         verify(stateModel).appendMessage(persisted);
         verify(wsService).sendAck("m1");
+        verify(msgService).markAcknowledged("m1");
     }
 
     @Test
@@ -286,14 +287,14 @@ class ConnectionControllerTest {
     }
 
     @Test
-    void ackShouldBeForwardedToMessageService() {
+    void ackShouldBeForwardedWithServerStatusToMessageService() {
         controller.connect("token123");
         verify(wsService).setOnAck(ackCaptor.capture());
         AckDto ack = new AckDto("m1", "DELIVERED");
 
         ackCaptor.getValue().accept(ack);
 
-        verify(msgService).acknowledgeDelivery("m1");
+        verify(msgService).acknowledgeDelivery("m1", "DELIVERED");
     }
 
     @Test
