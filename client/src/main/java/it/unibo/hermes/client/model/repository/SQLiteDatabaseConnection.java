@@ -26,9 +26,8 @@ import java.util.concurrent.locks.ReentrantLock;
 @Component
 public class SQLiteDatabaseConnection {
 
-    private static final Logger log = LoggerFactory.getLogger(SQLiteDatabaseConnection.class);
-
     public static final int SCHEMA_VERSION = 1;
+    private static final Logger log = LoggerFactory.getLogger(SQLiteDatabaseConnection.class);
     private static final int BUSY_TIMEOUT_MS = 5000;
 
     private final DataSource dataSource;

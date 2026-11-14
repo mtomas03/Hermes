@@ -3,12 +3,12 @@ package it.unibo.hermes.client.model.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
 import it.unibo.hermes.client.model.dto.ConversationDto;
 import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.SyncResponseDto;
-import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -135,12 +135,12 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "bob",
-                        "alice", MessageStatus.STORED.name()),
-                createInboundMessage(
-                        "m2", "bob",
-                        "alice", MessageStatus.SENT.name()))),
+                        createInboundMessage(
+                                "m1", "bob",
+                                "alice", MessageStatus.STORED.name()),
+                        createInboundMessage(
+                                "m2", "bob",
+                                "alice", MessageStatus.SENT.name()))),
                 "alice");
 
         InOrder order = inOrder(persistence, webSocketService);
@@ -172,9 +172,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "alice",
-                        "bob", MessageStatus.ACKNOWLEDGED.name()))),
+                        createInboundMessage(
+                                "m1", "alice",
+                                "bob", MessageStatus.ACKNOWLEDGED.name()))),
                 "alice");
 
         ArgumentCaptor<List<Message>> captor = ArgumentCaptor.forClass(List.class);
@@ -189,9 +189,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "bob",
-                        "alice", MessageStatus.ACKNOWLEDGED.name()))),
+                        createInboundMessage(
+                                "m1", "bob",
+                                "alice", MessageStatus.ACKNOWLEDGED.name()))),
                 "alice");
 
         verifyNoInteractions(webSocketService);
@@ -203,9 +203,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "alice",
-                        "bob", MessageStatus.STORED.name()))),
+                        createInboundMessage(
+                                "m1", "alice",
+                                "bob", MessageStatus.STORED.name()))),
                 "alice");
 
         verify(persistence).saveMessagesBatch(anyList());
@@ -218,9 +218,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob",
-                List.of(createInboundMessage(
-                        "m1", "bob",
-                        "alice", MessageStatus.ACKNOWLEDGED.name()))),
+                        List.of(createInboundMessage(
+                                "m1", "bob",
+                                "alice", MessageStatus.ACKNOWLEDGED.name()))),
                 "alice");
 
         verifyNoInteractions(webSocketService);
@@ -232,9 +232,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "bob",
-                        "alice", MessageStatus.STORED.name()))),
+                        createInboundMessage(
+                                "m1", "bob",
+                                "alice", MessageStatus.STORED.name()))),
                 null);
 
         verifyNoInteractions(webSocketService);
@@ -246,9 +246,9 @@ class SyncServiceTest {
         SyncService service = createSyncService();
 
         service.applySync(new SyncResponseDto("alice-bob", List.of(
-                createInboundMessage(
-                        "m1", "bob",
-                        "Alice", MessageStatus.STORED.name()))),
+                        createInboundMessage(
+                                "m1", "bob",
+                                "Alice", MessageStatus.STORED.name()))),
                 "alice");
 
         verify(webSocketService).sendAck("m1");

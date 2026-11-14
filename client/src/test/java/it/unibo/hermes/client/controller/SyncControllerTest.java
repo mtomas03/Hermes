@@ -206,7 +206,7 @@ class SyncControllerTest {
         when(stateModel.getSelectedConversation()).thenReturn(convA, convB);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(
                 new Message(
-                        "m1", "alice-bob", 
+                        "m1", "alice-bob",
                         "alice", "bob",
                         "hi", 1L, MessageStatus.SENT)));
 

@@ -158,11 +158,11 @@ class WebSocketServiceTest {
         when(newSession.isConnected()).thenReturn(true);
         ArgumentCaptor<StompSessionHandler> handlerCaptor = ArgumentCaptor.forClass(StompSessionHandler.class);
         when(stompClient.connectAsync(
-                    anyString(),
-                    any(WebSocketHttpHeaders.class),
-                    any(StompHeaders.class),
-                    handlerCaptor.capture()
-                ))
+                anyString(),
+                any(WebSocketHttpHeaders.class),
+                any(StompHeaders.class),
+                handlerCaptor.capture()
+        ))
                 .thenReturn(CompletableFuture.completedFuture(oldSession))
                 .thenReturn(CompletableFuture.completedFuture(newSession));
 
@@ -198,10 +198,10 @@ class WebSocketServiceTest {
 
     private void connectWith(StompSession session) {
         when(stompClient.connectAsync(
-                    anyString(),
-                    any(WebSocketHttpHeaders.class),
-                    any(StompHeaders.class),
-                    any(StompSessionHandler.class)))
+                anyString(),
+                any(WebSocketHttpHeaders.class),
+                any(StompHeaders.class),
+                any(StompSessionHandler.class)))
                 .thenReturn(CompletableFuture.completedFuture(session));
         service.connect("token");
     }

@@ -5,15 +5,6 @@ package it.unibo.hermes.client.infrastructure.exception;
  */
 public class AuthException extends RuntimeException {
 
-    public enum Reason {
-        INVALID_CREDENTIALS,
-        USERNAME_TAKEN,
-        BAD_REQUEST,
-        SERVICE_UNAVAILABLE,
-        SERVER_ERROR,
-        NETWORK_ERROR
-    }
-
     private final Reason reason;
     private final int statusCode;
 
@@ -33,5 +24,14 @@ public class AuthException extends RuntimeException {
 
     public int getStatusCode() {
         return statusCode;
+    }
+
+    public enum Reason {
+        INVALID_CREDENTIALS,
+        USERNAME_TAKEN,
+        BAD_REQUEST,
+        SERVICE_UNAVAILABLE,
+        SERVER_ERROR,
+        NETWORK_ERROR
     }
 }

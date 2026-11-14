@@ -45,25 +45,6 @@ public enum MessageStatus {
         this.rank = rank;
     }
 
-    public int rank() {
-        return rank;
-    }
-
-    /**
-     * Returns {@code true} if the transition from
-     * the current status to {@code next}
-     * is valid with respect to the monotonic message lifecycle.
-     */
-    public boolean canTransitionTo(MessageStatus next) {
-        if (next == null || this == next) {
-            return false;
-        }
-        if (this == PENDING && next == FAILED) {
-            return true;
-        }
-        return this != FAILED && next != FAILED && next.rank > this.rank;
-    }
-
     /**
      * Maps a raw status string from the server into a {@link MessageStatus}.
      */
@@ -81,5 +62,24 @@ public enum MessageStatus {
             case "FAILED", "REJECTED" -> Optional.of(FAILED);
             default -> Optional.empty();
         };
+    }
+
+    public int rank() {
+        return rank;
+    }
+
+    /**
+     * Returns {@code true} if the transition from
+     * the current status to {@code next}
+     * is valid with respect to the monotonic message lifecycle.
+     */
+    public boolean canTransitionTo(MessageStatus next) {
+        if (next == null || this == next) {
+            return false;
+        }
+        if (this == PENDING && next == FAILED) {
+            return true;
+        }
+        return this != FAILED && next != FAILED && next.rank > this.rank;
     }
 }

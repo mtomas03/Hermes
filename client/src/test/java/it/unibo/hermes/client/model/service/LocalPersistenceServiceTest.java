@@ -174,11 +174,11 @@ class LocalPersistenceServiceTest {
     @Test
     void savingMessagesBatchShouldDelegateToMessageRepository() {
         List<Message> batch = List.of(
-                new Message("m1", "alice-bob", 
-                        "alice", "bob", 
+                new Message("m1", "alice-bob",
+                        "alice", "bob",
                         "hi", 1L, MessageStatus.SENT),
-                new Message("m2", "alice-bob", 
-                        "bob", "alice", 
+                new Message("m2", "alice-bob",
+                        "bob", "alice",
                         "hi", 2L, MessageStatus.STORED));
 
         service.saveMessagesBatch(batch);

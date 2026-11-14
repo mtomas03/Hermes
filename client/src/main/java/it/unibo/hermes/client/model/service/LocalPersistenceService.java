@@ -1,11 +1,7 @@
 package it.unibo.hermes.client.model.service;
 
 import it.unibo.hermes.client.model.domain.*;
-import it.unibo.hermes.client.model.repository.AuthTokenRepository;
-import it.unibo.hermes.client.model.repository.ConversationRepository;
-import it.unibo.hermes.client.model.repository.LocalUserRepository;
-import it.unibo.hermes.client.model.repository.MessageRepository;
-import it.unibo.hermes.client.model.repository.SQLiteDatabaseConnection;
+import it.unibo.hermes.client.model.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 

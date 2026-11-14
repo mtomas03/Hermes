@@ -23,9 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
@@ -33,13 +31,12 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class MessageServiceTest {
 
+    private final List<Message> fakeOutbox = new ArrayList<>();
     @Mock
     private WebSocketService wsService;
     @Mock
     private LocalPersistenceService persistence;
-
     private MessageService messageService;
-    private final List<Message> fakeOutbox = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
