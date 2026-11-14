@@ -6,7 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.sqlite.SQLiteDataSource;
-
+import org.sqlite.SQLiteConfig;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -24,7 +24,10 @@ public class SQLiteDatabaseConnection {
 
     public SQLiteDatabaseConnection(AppProperties props) {
         if (props != null) {
-            SQLiteDataSource ds = new SQLiteDataSource();
+            SQLiteConfig config = new SQLiteConfig();
+            config.enforceForeignKeys(true);
+            config.setBusyTimeout(5000);
+            SQLiteDataSource ds = new SQLiteDataSource(config);
             ds.setUrl("jdbc:sqlite:" + props.getDbPath());
             this.dataSource = ds;
             log.info("SQLite database configured at: {}", props.getDbPath());
