@@ -80,13 +80,22 @@ public class ChatController {
 
         String trimmed = content.trim();
         Schedulers.boundedElastic().schedule(() -> {
+            User current = stateModel.getCurrentUser();
+            if (current == null || !current.equals(self)) {
+                log.debug("Aborting outbound send: user logged out or changed");
+                return;
+            }
+
             Message msg = messageService.send(
                     self.username(),
                     conv.conversationId(),
                     conv.recipientUsername().username(),
                     trimmed);
 
-            stateModel.appendMessage(msg);
+            if (self.equals(stateModel.getCurrentUser())
+                    && conv.equals(stateModel.getSelectedConversation())) {
+                stateModel.appendMessage(msg);
+            }
             log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
         });
     }

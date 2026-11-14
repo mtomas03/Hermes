@@ -5,10 +5,12 @@ import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.service.AuthService;
 import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.MessageService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
@@ -35,6 +37,7 @@ public class AuthController {
     private final LocalPersistenceService persistence;
     private final ConnectionController connectionController;
     private final SyncController syncController;
+    private final MessageService messageService;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "auth-expiry");
@@ -48,11 +51,22 @@ public class AuthController {
                           LocalPersistenceService persistence,
                           ConnectionController connectionController,
                           SyncController syncController) {
+        this(authService, stateModel, persistence, connectionController, syncController, null);
+    }
+
+    @Autowired
+    public AuthController(AuthService authService,
+                          ClientStateModel stateModel,
+                          LocalPersistenceService persistence,
+                          ConnectionController connectionController,
+                          SyncController syncController,
+                          MessageService messageService) {
         this.authService = authService;
         this.stateModel = stateModel;
         this.persistence = persistence;
         this.connectionController = connectionController;
         this.syncController = syncController;
+        this.messageService = messageService;
     }
 
     /**
@@ -112,6 +126,7 @@ public class AuthController {
         if (expirationAuthTokenTask != null) {
             expirationAuthTokenTask.cancel(false);
         }
+        syncController.resetSyncState();
         Schedulers.boundedElastic().schedule(() -> {
             try {
                 persistence.clearAuthToken();
@@ -121,9 +136,12 @@ public class AuthController {
                 } catch (RuntimeException e) {
                     log.warn("Error while closing the connection during logout: {}", e.getMessage());
                 }
-                persistence.clearLocalUser();
                 stateModel.clearSession();
+                persistence.clearLocalUser();
                 syncController.resetSyncState();
+                if (messageService != null) {
+                    messageService.resetClocks();
+                }
                 stateModel.setStatusMessage("Logged out");
             }
         });
@@ -158,7 +176,11 @@ public class AuthController {
 
         Optional<User> existingUser = persistence.loadLocalUser();
         if (existingUser.isPresent() && !existingUser.get().username().equals(user.username())) {
+            syncController.resetSyncState();
             persistence.clearLocalUser();
+            if (messageService != null) {
+                messageService.resetClocks();
+            }
         }
 
         persistence.saveAuthToken(token);
@@ -187,6 +209,7 @@ public class AuthController {
 
     private void handleTokenExpired() {
         log.info("JWT expired, terminating session");
+        syncController.resetSyncState();
         try {
             persistence.clearAuthToken();
         } finally {
@@ -195,9 +218,12 @@ public class AuthController {
             } catch (RuntimeException e) {
                 log.warn("Error while closing connection on token expiry: {}", e.getMessage());
             }
-            persistence.clearLocalUser();
             stateModel.clearSession();
+            persistence.clearLocalUser();
             syncController.resetSyncState();
+            if (messageService != null) {
+                messageService.resetClocks();
+            }
             stateModel.setAuthState(AuthState.TOKEN_EXPIRED);
             stateModel.setStatusMessage("Session expired. Please log in again.");
         }

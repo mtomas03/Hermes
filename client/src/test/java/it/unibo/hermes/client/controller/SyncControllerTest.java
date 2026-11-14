@@ -2,6 +2,7 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.dto.ConversationDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.service.LocalPersistenceService;
 import it.unibo.hermes.client.model.service.SyncService;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.time.Instant;
 import java.util.List;
@@ -131,5 +133,48 @@ class SyncControllerTest {
         controller.refreshActiveMessages("alice-bob");
 
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(List.of(msg));
+    }
+
+    @Test
+    void resetSyncStateShouldCancelInFlightConversationSyncAndIgnoreLateResponses() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+
+        Sinks.One<SyncResponseDto> pendingSync = Sinks.one();
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
+                .thenReturn(pendingSync.asMono());
+
+        controller.syncConversationIfNeeded("alice-bob");
+        controller.resetSyncState();
+
+        InboundMessageDto staleMsg = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "stale", 1L, MessageStatus.STORED.name());
+        pendingSync.tryEmitValue(new SyncResponseDto("alice-bob", List.of(staleMsg)));
+
+        verify(syncService, never()).applySync(any(), any());
+        verify(persistence, never()).saveMessage(any());
+    }
+
+    @Test
+    void resetSyncStateDuringSyncAllShouldAbortPersistingFetchedConversations() {
+        AuthToken validToken = new AuthToken(
+                "valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+
+        Sinks.One<List<ConversationDto>> pendingFetch = Sinks.one();
+        when(syncService.fetchConversations(validToken.bearerHeader()))
+                .thenReturn(pendingFetch.asMono());
+
+        controller.syncAll();
+        controller.resetSyncState();
+
+        pendingFetch.tryEmitValue(List.of(new ConversationDto(
+                "alice-bob", "alice", "bob")));
+
+        verify(persistence, never()).saveConversation(any());
     }
 }

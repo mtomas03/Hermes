@@ -343,6 +343,26 @@ class MessageServiceTest {
         verify(persistence).updateMessageStatus("m1", MessageStatus.SENT);
     }
 
+    @Test
+    void resetClocksShouldDiscardCachedCountersAndReloadFromPersistence() {
+        when(wsService.sendMessage(any())).thenReturn(true);
+        when(persistence.getLastLogicalTimestamp("alice-bob")).thenReturn(0L);
+
+        Message first = messageService.send(
+                "alice", "alice-bob", "bob", "hi");
+        Message second = messageService.send(
+                "alice", "alice-bob", "bob", "hi again");
+        assertEquals(1L, first.getLogicalTimestamp());
+        assertEquals(2L, second.getLogicalTimestamp());
+
+        messageService.resetClocks();
+
+        Message afterReset = messageService.send(
+                "charlie", "alice-bob", "bob", "hi after reset");
+        assertEquals(1L, afterReset.getLogicalTimestamp());
+        verify(persistence, times(2)).getLastLogicalTimestamp("alice-bob");
+    }
+
     private Message createPendingMessage(String messageId, long logicalTimestamp) {
         return new Message(
                 messageId, "alice-bob",

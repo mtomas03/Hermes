@@ -16,13 +16,13 @@ import it.unibo.hermes.client.model.state.ConnectionState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Manages the full WebSocket connection lifecycle:
@@ -49,6 +49,8 @@ public class ConnectionController {
     private final AppProperties props;
     private final MessageService msgService;
     private final AtomicInteger retryCount = new AtomicInteger(0);
+    private final AtomicLong sessionGeneration = new AtomicLong(0);
+    private final Object sessionLock = new Object();
     private volatile ScheduledFuture<?> pending = null;
     private volatile String currentToken;
     private volatile Runnable onConnectedCallback = () -> {
@@ -73,14 +75,18 @@ public class ConnectionController {
         this.onConnectedCallback = callback;
     }
 
-    /**
-     * Wires callbacks on the WS service and initiates the STOMP connection.
-     *
-     * @param rawToken the JWT token to use for authentication
-     */
     public void connect(String rawToken) {
-        this.currentToken = rawToken;
+        long gen;
+        synchronized (sessionLock) {
+            cancelPending();
+            this.currentToken = rawToken;
+            gen = sessionGeneration.incrementAndGet();
+        }
+
         wsService.setOnConnected(() -> {
+            if (!isSessionActive(gen)) {
+                return;
+            }
             log.info("WebSocket connected");
             retryCount.set(0);
             stateModel.setConnectionState(ConnectionState.CONNECTED);
@@ -88,16 +94,19 @@ public class ConnectionController {
             onConnectedCallback.run();
         });
 
-        wsService.setOnReadyToSend(this::scheduleOutboxFlush);
-        wsService.setOnMessage(this::handleInboundMessage);
-        wsService.setOnAck(this::handleAck);
-        wsService.setOnAppError(this::handleAppError);
-        wsService.setOnSystemMessage(this::handleSystemMessage);
+        wsService.setOnReadyToSend(() -> scheduleOutboxFlush(gen));
+        wsService.setOnMessage(dto -> handleInboundMessage(dto, gen));
+        wsService.setOnAck(ack -> handleAck(ack, gen));
+        wsService.setOnAppError(err -> handleAppError(err, gen));
+        wsService.setOnSystemMessage(msg -> handleSystemMessage(msg, gen));
 
         wsService.setOnError(err ->
                 log.warn("WebSocket error: {}", err.getMessage()));
 
         wsService.setOnDisconnected(() -> {
+            if (!isSessionActive(gen)) {
+                return;
+            }
             log.info("WebSocket disconnected");
             stateModel.setConnectionState(ConnectionState.DISCONNECTED);
             stateModel.setStatusMessage("Offline");
@@ -110,51 +119,84 @@ public class ConnectionController {
     }
 
     /**
-     * Disconnects the WebSocket and cancels any pending reconnect attempts.
+     * Disconnects the WebSocket, invalidates any in-flight inbound handlers,
+     * resets Lamport clocks and cancels any pending reconnect attempts.
      */
     public void disconnect() {
-        cancelPending();
-        this.currentToken = null;
-        wsService.disconnect();
+        synchronized (sessionLock) {
+            sessionGeneration.incrementAndGet();
+            cancelPending();
+            this.currentToken = null;
+            wsService.disconnect();
+        }
+        msgService.resetClocks();
         stateModel.setConnectionState(ConnectionState.DISCONNECTED);
         stateModel.setStatusMessage("Disconnected");
     }
 
-    private void handleInboundMessage(InboundMessageDto dto) {
+    private void handleInboundMessage(InboundMessageDto dto, long gen) {
         log.debug("Inbound: {} in conv {}", dto.messageId(), dto.conversationId());
 
-        Message msg;
-        try {
-            msg = msgService.receiveAndPersist(dto);
-        } catch (MessagePersistenceException e) {
-            log.error("Could not persist inbound message {} - no ACK will be sent: {}",
-                    dto.messageId(), e.getMessage());
-            return;
-        }
+        synchronized (sessionLock) {
+            if (!isSessionActive(gen)) {
+                log.debug("Ignoring inbound message {} from stale or logged-out session", dto.messageId());
+                return;
+            }
 
-        // Only update the active message list if this conv is currently open
-        Conversation selected = stateModel.getSelectedConversation();
-        if (selected != null && selected.conversationId().equals(dto.conversationId())) {
-            stateModel.appendMessage(msg);
-        }
+            User currentUser = stateModel.getCurrentUser();
+            if (currentUser != null && !isMessageForUser(dto, currentUser.username())) {
+                log.warn("Ignoring inbound message {} not belonging to current user {}",
+                        dto.messageId(), currentUser.username());
+                return;
+            }
 
-        wsService.sendAck(dto.messageId());
+            Message msg;
+            try {
+                msg = msgService.receiveAndPersist(dto);
+            } catch (MessagePersistenceException e) {
+                log.error("Could not persist inbound message {} - no ACK will be sent: {}",
+                        dto.messageId(), e.getMessage());
+                return;
+            }
+
+            // Only update the active message list if this conv is currently open
+            Conversation selected = stateModel.getSelectedConversation();
+            if (selected != null && selected.conversationId().equals(dto.conversationId())) {
+                stateModel.appendMessage(msg);
+            }
+
+            wsService.sendAck(dto.messageId());
+        }
     }
 
-    private void handleAck(AckDto ack) {
-        log.debug("ACK for {}: {}", ack.messageId(), ack.status());
-        msgService.acknowledgeDelivery(ack.messageId());
-    }
-
-    private void handleAppError(ErrorDto err) {
-        log.warn("Server rejected message [{}]: {} - {}", err.messageId(), err.code(), err.reason());
-        if (err.messageId() != null && PERMANENT_REJECTIONS.contains(err.code())) {
-            msgService.markRejected(err.messageId());
+    private void handleAck(AckDto ack, long gen) {
+        synchronized (sessionLock) {
+            if (!isSessionActive(gen)) {
+                log.debug("Ignoring ACK {} from stale or logged-out session", ack.messageId());
+                return;
+            }
+            log.debug("ACK for {}: {}", ack.messageId(), ack.status());
+            msgService.acknowledgeDelivery(ack.messageId());
         }
     }
 
-    private void scheduleOutboxFlush() {
+    private void handleAppError(ErrorDto err, long gen) {
+        synchronized (sessionLock) {
+            if (!isSessionActive(gen)) {
+                return;
+            }
+            log.warn("Server rejected message [{}]: {} - {}", err.messageId(), err.code(), err.reason());
+            if (err.messageId() != null && PERMANENT_REJECTIONS.contains(err.code())) {
+                msgService.markRejected(err.messageId());
+            }
+        }
+    }
+
+    private void scheduleOutboxFlush(long gen) {
         scheduler.execute(() -> {
+            if (!isSessionActive(gen)) {
+                return;
+            }
             User self = stateModel.getCurrentUser();
             if (self == null) {
                 log.warn("Outbox not flushed: no local user");
@@ -168,19 +210,32 @@ public class ConnectionController {
         });
     }
 
-    private void handleSystemMessage(SystemMessageDto msg) {
+    private void handleSystemMessage(SystemMessageDto msg, long gen) {
+        if (!isSessionActive(gen)) {
+            return;
+        }
         log.info("System message received: {} ({})", msg.type(), msg.reason());
         if ("FORCE_RECONNECT".equals(msg.type())) {
             log.warn("Gateway requested a forced reconnect ({}) - reconnecting to resync", msg.reason());
-            if (currentToken != null) {
+            String token = currentToken;
+            if (token != null && isSessionActive(gen)) {
                 stateModel.setConnectionState(ConnectionState.RECONNECTING);
                 stateModel.setStatusMessage("Re-synchronising");
                 wsService.disconnect();
-                wsService.connect(currentToken);
+                wsService.connect(token);
             } else {
-                log.warn("Cannot force reconnect: currentToken is null");
+                log.warn("Cannot force reconnect: session is no longer active");
             }
         }
+    }
+
+    private boolean isSessionActive(long gen) {
+        return sessionGeneration.get() == gen && currentToken != null;
+    }
+
+    private boolean isMessageForUser(InboundMessageDto dto, String username) {
+        return username.equalsIgnoreCase(dto.recipientUsername())
+                || username.equalsIgnoreCase(dto.senderUsername());
     }
 
     private void scheduleRetry(String rawToken) {

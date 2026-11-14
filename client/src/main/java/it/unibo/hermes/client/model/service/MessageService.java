@@ -181,6 +181,13 @@ public class MessageService {
                 .updateAndGet(current -> Math.max(current, remoteMaxClock));
     }
 
+    /**
+     * Resets all conversation Lamport clocks.
+     */
+    public void resetClocks() {
+        lamportClocks.clear();
+    }
+
     private AtomicLong getConversationClock(String conversationId) {
         return lamportClocks.computeIfAbsent(conversationId, cid -> {
             long lastKnownClock = persistenceService.getLastLogicalTimestamp(cid);

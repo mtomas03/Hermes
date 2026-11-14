@@ -320,4 +320,52 @@ class ConnectionControllerTest {
 
         verify(wsService, never()).disconnect();
     }
+
+    @Test
+    void inboundMessageAfterDisconnectShouldNotBePersistedOrAcked() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+
+        controller.disconnect();
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(msgService, never()).receiveAndPersist(any());
+        verify(wsService, never()).sendAck(any());
+        verify(stateModel, never()).appendMessage(any());
+    }
+
+    @Test
+    void inboundMessageForPreviousUserShouldNotBePersistedOrAcked() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("charlie"));
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(msgService, never()).receiveAndPersist(any());
+        verify(wsService, never()).sendAck(any());
+        verify(stateModel, never()).appendMessage(any());
+    }
+
+    @Test
+    void ackAfterDisconnectShouldBeIgnoredAndDisconnectShouldResetClocks() {
+        controller.connect("token123");
+        verify(wsService).setOnAck(ackCaptor.capture());
+
+        controller.disconnect();
+        ackCaptor.getValue().accept(new AckDto("m1", "DELIVERED"));
+
+        verify(msgService).resetClocks();
+        verify(msgService, never()).acknowledgeDelivery(any());
+    }
 }

@@ -5,6 +5,7 @@ import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.service.AuthService;
 import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.MessageService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,13 +42,16 @@ class AuthControllerTest {
     @Mock
     private SyncController syncController;
     @Mock
+    private MessageService messageService;
+    @Mock
     private Consumer<String> onError;
 
     private AuthController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AuthController(authService, stateModel, persistence, connectionController, syncController);
+        controller = new AuthController(
+                authService, stateModel, persistence, connectionController, syncController, messageService);
     }
 
     @Test
@@ -195,7 +199,8 @@ class AuthControllerTest {
 
         verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearAuthToken();
         verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
-        verify(syncController).resetSyncState();
+        verify(syncController, timeout(ASYNC_TIMEOUT_MS).atLeastOnce()).resetSyncState();
+        verify(messageService, timeout(ASYNC_TIMEOUT_MS)).resetClocks();
     }
 
     @Test
@@ -225,5 +230,16 @@ class AuthControllerTest {
         verify(persistence).clearAuthToken();
         verify(stateModel).clearSession();
         verify(stateModel).setAuthState(AuthState.TOKEN_EXPIRED);
+    }
+
+    @Test
+    void logoutShouldDisconnectAndClearUserBeforeResettingLamportClocks() {
+        controller.logout();
+
+        InOrder order = inOrder(connectionController, persistence, stateModel, messageService);
+        order.verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
+        order.verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
+        order.verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        order.verify(messageService, timeout(ASYNC_TIMEOUT_MS)).resetClocks();
     }
 }
