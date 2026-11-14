@@ -31,7 +31,7 @@ public class AuthTokenRepository {
      */
     public void save(AuthToken token) {
         String sql = "INSERT OR REPLACE INTO auth_token (id, raw_token, expires_at) VALUES (1, ?, ?)";
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, token.rawToken());
             ps.setLong(2, token.expiresAt().toEpochMilli());
@@ -47,7 +47,7 @@ public class AuthTokenRepository {
      * @return an Optional containing the token if present, or empty if not
      */
     public Optional<AuthToken> find() {
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT raw_token, expires_at FROM auth_token WHERE id = 1")) {
             if (rs.next()) {
@@ -64,7 +64,7 @@ public class AuthTokenRepository {
      * Deletes every stored token.
      */
     public void clear() {
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.execute("DELETE FROM auth_token");
         } catch (SQLException e) {

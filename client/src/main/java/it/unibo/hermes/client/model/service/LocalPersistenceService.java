@@ -5,6 +5,8 @@ import it.unibo.hermes.client.model.repository.AuthTokenRepository;
 import it.unibo.hermes.client.model.repository.ConversationRepository;
 import it.unibo.hermes.client.model.repository.LocalUserRepository;
 import it.unibo.hermes.client.model.repository.MessageRepository;
+import it.unibo.hermes.client.model.repository.SQLiteDatabaseConnection;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -17,19 +19,30 @@ import java.util.Optional;
 @Service
 public class LocalPersistenceService {
 
+    private final SQLiteDatabaseConnection db;
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
     private final LocalUserRepository userRepository;
     private final AuthTokenRepository authTokenRepository;
 
-    public LocalPersistenceService(MessageRepository messageRepository,
+    @Autowired
+    public LocalPersistenceService(SQLiteDatabaseConnection db,
+                                   MessageRepository messageRepository,
                                    ConversationRepository conversationRepository,
                                    LocalUserRepository localUserRepository,
                                    AuthTokenRepository authTokenRepository) {
+        this.db = db;
         this.messageRepository = messageRepository;
         this.conversationRepository = conversationRepository;
         this.userRepository = localUserRepository;
         this.authTokenRepository = authTokenRepository;
+    }
+
+    public LocalPersistenceService(MessageRepository messageRepository,
+                                   ConversationRepository conversationRepository,
+                                   LocalUserRepository localUserRepository,
+                                   AuthTokenRepository authTokenRepository) {
+        this(null, messageRepository, conversationRepository, localUserRepository, authTokenRepository);
     }
 
     /**
@@ -82,6 +95,55 @@ public class LocalPersistenceService {
      */
     public void saveConversation(Conversation conv) {
         conversationRepository.upsert(conv);
+    }
+
+    /**
+     * Persists a list of messages in a single atomic transaction.
+     *
+     * @param messages the messages to persist
+     */
+    public void saveMessagesBatch(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        if (db != null) {
+            db.inTransaction(() -> messageRepository.upsertAll(messages));
+        } else {
+            messageRepository.upsertAll(messages);
+        }
+    }
+
+    /**
+     * Persists a list of conversations in a single atomic transaction.
+     *
+     * @param conversations the conversations to persist
+     */
+    public void saveConversationsBatch(List<Conversation> conversations) {
+        if (conversations == null || conversations.isEmpty()) {
+            return;
+        }
+        if (db != null) {
+            db.inTransaction(() -> conversationRepository.upsertAll(conversations));
+        } else {
+            conversationRepository.upsertAll(conversations);
+        }
+    }
+
+    /**
+     * Updates the status of a list of messages in a single atomic transaction.
+     *
+     * @param messageIds the message ids
+     * @param status     the new message status
+     */
+    public void updateMessageStatusesBatch(List<String> messageIds, MessageStatus status) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return;
+        }
+        if (db != null) {
+            db.inTransaction(() -> messageRepository.updateStatusBatch(messageIds, status));
+        } else {
+            messageRepository.updateStatusBatch(messageIds, status);
+        }
     }
 
     /**
@@ -156,14 +218,13 @@ public class LocalPersistenceService {
     }
 
     /**
-     * Increments and returns the delivery attempt count
+     * Increments the delivery attempt count
      * for a {@code PENDING} message.
      *
      * @param messageId the identifier of the message
-     * @return the updated attempt count
      */
-    public int incrementDeliveryAttempts(String messageId) {
-        return messageRepository.incrementDeliveryAttempts(messageId);
+    public void incrementDeliveryAttempts(String messageId) {
+        messageRepository.incrementDeliveryAttempts(messageId);
     }
 
     /**
