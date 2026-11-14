@@ -28,8 +28,8 @@ public class LocalUserRepository {
      * @param user the user to save
      */
     public void save(User user) {
-        String sql = "INSERT OR REPLACE INTO user (username) VALUES (?)";
-        try (Connection conn = db.getDataSource().getConnection();
+        String sql = "INSERT OR REPLACE INTO user (id, username) VALUES (1, ?)";
+        try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, user.username());
             ps.executeUpdate();
@@ -44,7 +44,7 @@ public class LocalUserRepository {
      * @return an Optional containing the first user, or empty if none found
      */
     public Optional<User> findFirst() {
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT * FROM user LIMIT 1")) {
             if (rs.next()) {
@@ -60,7 +60,7 @@ public class LocalUserRepository {
      * Clears all users from the local database.
      */
     public void clear() {
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("DELETE FROM user");
         } catch (SQLException e) {

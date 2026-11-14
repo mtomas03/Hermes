@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -89,51 +90,65 @@ public class SyncService {
      * @param localUsername the user running this client, or {@code null} if unknown (no ACK is then sent)
      */
     public void applySync(SyncResponseDto response, String localUsername) {
-        for (var dto : response.messages()) {
+        List<InboundMessageDto> incoming = response.messages();
+        if (incoming == null || incoming.isEmpty()) {
+            return;
+        }
+
+        List<Message> messages = new ArrayList<>(incoming.size());
+        List<String> toAcknowledge = new ArrayList<>();
+
+        for (var dto : incoming) {
             MessageStatus serverMessageStatus = parseStatus(dto.messageStatus());
 
-            Message msg = new Message(
+            messages.add(new Message(
                     dto.messageId(),
                     dto.conversationId(),
                     dto.senderUsername(),
                     dto.recipientUsername(),
                     dto.content(),
                     dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L,
-                    serverMessageStatus);
+                    serverMessageStatus));
 
-            boolean persisted = persistence.saveMessage(msg);
+            if (needsAcknowledgement(dto, localUsername, serverMessageStatus)) {
+                toAcknowledge.add(dto.messageId());
+            }
+        }
 
+        persistence.saveMessagesBatch(messages);
+
+        for (var dto : incoming) {
             if (dto.logicalTimestamp() != null) {
                 messageService.syncConversationClock(
                         response.conversationId(),
                         dto.logicalTimestamp());
             }
-            if (!persisted) {
-                log.error("Could not persist synced message {} - it will not be acknowledged", dto.messageId());
-                continue;
-            }
+        }
 
-            if (needsAcknowledgement(dto, localUsername)) {
-                webSocketService.sendAck(dto.messageId());
-                persistence.updateMessageStatus(dto.messageId(), MessageStatus.ACKNOWLEDGED);
+        if (!toAcknowledge.isEmpty()) {
+            for (String messageId : toAcknowledge) {
+                webSocketService.sendAck(messageId);
             }
+            persistence.updateMessageStatusesBatch(toAcknowledge, MessageStatus.ACKNOWLEDGED);
         }
     }
 
-    private MessageStatus parseStatus(String statusStr) {
-        if (statusStr == null || statusStr.isBlank()) {
-            return MessageStatus.STORED;
-        }
-        try {
-            return MessageStatus.valueOf(statusStr.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return MessageStatus.STORED;
-        }
+    private MessageStatus parseStatus(String messageStatus) {
+        return MessageStatus.fromServerStatus(messageStatus)
+                .orElseGet(() -> {
+                    if (messageStatus != null && !messageStatus.isBlank()) {
+                        log.warn("Unrecognised server message status '{}', defaulting to STORED", messageStatus);
+                    }
+                    return MessageStatus.STORED;
+                });
     }
 
-    private boolean needsAcknowledgement(InboundMessageDto dto, String localUsername) {
+    private boolean needsAcknowledgement(InboundMessageDto dto,
+                                         String localUsername,
+                                         MessageStatus parsedStatus) {
         return localUsername != null
                 && localUsername.equalsIgnoreCase(dto.recipientUsername())
-                && !MessageStatus.ACKNOWLEDGED.name().equalsIgnoreCase(dto.messageStatus());
+                && parsedStatus != MessageStatus.DELIVERED
+                && parsedStatus != MessageStatus.ACKNOWLEDGED;
     }
 }

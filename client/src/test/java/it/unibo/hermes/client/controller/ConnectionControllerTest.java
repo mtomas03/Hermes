@@ -76,7 +76,6 @@ class ConnectionControllerTest {
 
         verify(wsService).setOnConnected(runnableCaptor.capture());
 
-        // Simulate the WebSocketService reporting a successful handshake
         runnableCaptor.getValue().run();
 
         verify(stateModel).setConnectionState(ConnectionState.CONNECTED);
@@ -192,6 +191,39 @@ class ConnectionControllerTest {
     }
 
     @Test
+    void disconnectDuringPendingRetryShouldCancelRetryAndNotConnect() throws InterruptedException {
+        ReflectionTestUtils.setField(props, "reconnectMaxAttempts", 3);
+        ReflectionTestUtils.setField(props, "reconnectBaseDelayMs", 100L);
+        ReflectionTestUtils.setField(props, "reconnectMaxDelayMs", 500L);
+
+        controller.connect("token123");
+        verify(wsService).setOnDisconnected(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+        verify(stateModel).setConnectionState(ConnectionState.RECONNECTING);
+
+        controller.disconnect();
+
+        Thread.sleep(200);
+
+        verify(wsService, times(1)).connect("token123");
+    }
+
+    @Test
+    void forceReconnectWhenLoggedOutShouldNotCallConnectWithNull() {
+        controller.connect("token123");
+        verify(wsService).setOnSystemMessage(systemMessageCaptor.capture());
+
+        controller.disconnect();
+        clearInvocations(wsService);
+
+        systemMessageCaptor.getValue().accept(new SystemMessageDto(
+                "FORCE_RECONNECT", "BACKBONE_RECOVERED"));
+
+        verify(wsService, never()).connect(any());
+    }
+
+    @Test
     void inboundMessageForTheOpenConversationShouldBeAppendedToActiveMessages() {
         Conversation open = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getSelectedConversation()).thenReturn(open);
@@ -211,6 +243,7 @@ class ConnectionControllerTest {
         verify(msgService).receiveAndPersist(dto);
         verify(stateModel).appendMessage(persisted);
         verify(wsService).sendAck("m1");
+        verify(msgService).markAcknowledged("m1");
     }
 
     @Test
@@ -254,14 +287,14 @@ class ConnectionControllerTest {
     }
 
     @Test
-    void ackShouldBeForwardedToMessageService() {
+    void ackShouldBeForwardedWithServerStatusToMessageService() {
         controller.connect("token123");
         verify(wsService).setOnAck(ackCaptor.capture());
         AckDto ack = new AckDto("m1", "DELIVERED");
 
         ackCaptor.getValue().accept(ack);
 
-        verify(msgService).acknowledgeDelivery("m1");
+        verify(msgService).acknowledgeDelivery("m1", "DELIVERED");
     }
 
     @Test
@@ -287,5 +320,92 @@ class ConnectionControllerTest {
                 "SOME_OTHER_TYPE", "n/a"));
 
         verify(wsService, never()).disconnect();
+    }
+
+    @Test
+    void inboundMessageAfterDisconnectShouldNotBePersistedOrAcked() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+
+        controller.disconnect();
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(msgService, never()).receiveAndPersist(any());
+        verify(wsService, never()).sendAck(any());
+        verify(stateModel, never()).appendMessage(any());
+    }
+
+    @Test
+    void inboundMessageForPreviousUserShouldNotBePersistedOrAcked() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("charlie"));
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice", "hi",
+                1L, "SENT");
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(msgService, never()).receiveAndPersist(any());
+        verify(wsService, never()).sendAck(any());
+        verify(stateModel, never()).appendMessage(any());
+    }
+
+    @Test
+    void ackAfterDisconnectShouldBeIgnoredAndDisconnectShouldResetClocks() {
+        controller.connect("token123");
+        verify(wsService).setOnAck(ackCaptor.capture());
+
+        controller.disconnect();
+        ackCaptor.getValue().accept(new AckDto("m1", "DELIVERED"));
+
+        verify(msgService).resetClocks();
+        verify(msgService, never()).acknowledgeDelivery(any());
+    }
+
+    @Test
+    void immediateDisconnectAfterConnectDoesNotResetRetryCountAndStopsAtMaxAttempts() {
+        ReflectionTestUtils.setField(props, "reconnectMaxAttempts", 2);
+        ReflectionTestUtils.setField(props, "reconnectBaseDelayMs", 5L);
+        ReflectionTestUtils.setField(props, "reconnectMaxDelayMs", 20L);
+        ReflectionTestUtils.setField(props, "stableConnectionMs", 10_000L);
+
+        controller.connect("token123");
+        verify(wsService).setOnConnected(runnableCaptor.capture());
+        Runnable onConnected = runnableCaptor.getValue();
+        verify(wsService).setOnDisconnected(runnableCaptor.capture());
+        Runnable onDisconnected = runnableCaptor.getValue();
+
+        // Cycle 1: connect -> drop (attempt 1)
+        onConnected.run();
+        onDisconnected.run();
+        verify(wsService, timeout(ASYNC_TIMEOUT_MS).times(2))
+                .connect("token123");
+
+        // Cycle 2: connect -> drop (attempt 2)
+        onConnected.run();
+        onDisconnected.run();
+        verify(wsService, timeout(ASYNC_TIMEOUT_MS).times(3))
+                .connect("token123");
+
+        // Cycle 3: connect -> drop (attempt 3 > maxAttempts=2 -> FAILED)
+        onConnected.run();
+        onDisconnected.run();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setConnectionState(ConnectionState.FAILED);
+    }
+
+    @Test
+    void shutdownShouldDisconnectWebSocket() {
+        controller.shutdown();
+
+        verify(wsService).disconnect();
+        verify(stateModel).setConnectionState(ConnectionState.DISCONNECTED);
     }
 }

@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.repository;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.User;
 import org.slf4j.Logger;
@@ -26,9 +27,9 @@ public class ConversationRepository {
      * Upserts a conversation into the database.
      * If a conversation with the same ID already exists, it will be updated.
      *
-     * @param c the conversation to upsert
+     * @param conversation the conversation to upsert
      */
-    public void upsert(Conversation c) {
+    public void upsert(Conversation conversation) {
         String sql = """
                 INSERT INTO conversation
                     (conversation_id, recipient_username)
@@ -36,13 +37,43 @@ public class ConversationRepository {
                 ON CONFLICT(conversation_id) DO UPDATE SET
                     recipient_username  = excluded.recipient_username
                 """;
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, c.conversationId());
-            ps.setString(2, c.recipientUsername().username());
+            ps.setString(1, conversation.conversationId());
+            ps.setString(2, conversation.recipientUsername().username());
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("Failed to upsert conversation {}", c.conversationId(), e);
+            log.error("Failed to upsert conversation {}", conversation.conversationId(), e);
+        }
+    }
+
+    /**
+     * Updates or inserts a list of conversations.
+     *
+     * @param conversations the conversations to upsert
+     */
+    public void upsertAll(List<Conversation> conversations) {
+        if (conversations == null || conversations.isEmpty()) {
+            return;
+        }
+        String sql = """
+                INSERT INTO conversation
+                    (conversation_id, recipient_username)
+                VALUES (?, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    recipient_username  = excluded.recipient_username
+                """;
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Conversation conversation : conversations) {
+                ps.setString(1, conversation.conversationId());
+                ps.setString(2, conversation.recipientUsername().username());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        } catch (SQLException e) {
+            log.error("Failed to batch upsert {} conversations", conversations.size(), e);
+            throw new SQLitePersistenceException("Failed to batch upsert conversations", e);
         }
     }
 
@@ -54,7 +85,7 @@ public class ConversationRepository {
     public List<Conversation> findAll() {
         String sql = "SELECT * FROM conversation";
         List<Conversation> result = new ArrayList<>();
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
             while (rs.next()) {
@@ -74,7 +105,7 @@ public class ConversationRepository {
      */
     public Optional<Conversation> findByConversationId(String conversationId) {
         String sql = "SELECT * FROM conversation WHERE conversation_id = ?";
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, conversationId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -90,7 +121,7 @@ public class ConversationRepository {
      * Clears all conversations from the database.
      */
     public void clear() {
-        try (Connection conn = db.getDataSource().getConnection();
+        try (Connection conn = db.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("DELETE FROM conversation");
         } catch (SQLException e) {

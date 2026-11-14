@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -12,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,8 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
@@ -30,16 +31,24 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class MessageServiceTest {
 
+    private final List<Message> fakeOutbox = new ArrayList<>();
     @Mock
     private WebSocketService wsService;
     @Mock
     private LocalPersistenceService persistence;
-
     private MessageService messageService;
 
     @BeforeEach
     void setUp() {
+        fakeOutbox.clear();
         messageService = new MessageService(wsService, persistence);
+
+        lenient().when(persistence.saveMessage(any())).thenAnswer(inv -> {
+            fakeOutbox.add(inv.getArgument(0));
+            return true;
+        });
+        lenient().when(persistence.loadPendingOutbound(anyString()))
+                .thenAnswer(inv -> new ArrayList<>(fakeOutbox));
     }
 
     @Test
@@ -102,8 +111,7 @@ class MessageServiceTest {
         Message queued = messageService.send(
                 "alice", "alice-bob",
                 "bob", "hello");
-        when(persistence.loadPendingOutbound("alice"))
-                .thenReturn(List.of(queued));
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(queued));
 
         int submitted = messageService.flushOutbox("alice");
 
@@ -177,7 +185,9 @@ class MessageServiceTest {
         Message m1 = createPendingMessage("m1", 1L);
         Message m2 = createPendingMessage("m2", 2L);
         when(persistence.loadPendingOutbound("alice"))
-                .thenReturn(List.of(m1, m2));
+                .thenReturn(List.of(m1, m2))
+                .thenReturn(List.of());
+
         List<String> order = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch firstInside = new CountDownLatch(1);
         when(wsService.sendMessage(any())).thenAnswer(invocation -> {
@@ -200,8 +210,47 @@ class MessageServiceTest {
         }
 
         assertEquals(List.of("m1", "m2"), order);
-        verify(persistence, times(1))
-                .loadPendingOutbound("alice");
+
+        verify(persistence, times(2)).loadPendingOutbound("alice");
+    }
+
+    @Test
+    void sendRacingAFlushShouldBeCoalescedAndTransmittedInOrder() throws Exception {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice"))
+                .thenReturn(List.of(m1))
+                .thenAnswer(inv -> {
+                    List<Message> result = new ArrayList<>();
+                    result.add(m1);
+                    result.addAll(fakeOutbox);
+                    return result;
+                })
+                .thenReturn(List.of());
+
+        CountDownLatch flushInside = new CountDownLatch(1);
+        List<String> transmittedIds = Collections.synchronizedList(new ArrayList<>());
+        when(wsService.sendMessage(any())).thenAnswer(invocation -> {
+            OutboundMessageDto dto = invocation.getArgument(0);
+            transmittedIds.add(dto.messageId());
+            if ("m1".equals(dto.messageId()) && transmittedIds.size() == 1) {
+                flushInside.countDown();
+                Thread.sleep(150);
+            }
+            return true;
+        });
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            var flushFuture = pool.submit(() -> messageService.flushOutbox("alice"));
+            flushInside.await();
+            var sendFuture = pool.submit(() -> messageService
+                    .send("alice", "alice-bob", "bob", "racing"));
+            sendFuture.get(5, TimeUnit.SECONDS);
+            flushFuture.get(5, TimeUnit.SECONDS);
+        }
+
+        assertTrue(transmittedIds.size() >= 2);
+        assertEquals("m1", transmittedIds.getFirst());
+        assertTrue(transmittedIds.stream().anyMatch(id -> !id.equals("m1")));
+        verify(persistence, atLeast(2)).loadPendingOutbound("alice");
     }
 
     @Test
@@ -237,7 +286,6 @@ class MessageServiceTest {
 
     @Test
     void receivingAnInboundMessageShouldPersistItAndAdvanceLamportClock() {
-        when(persistence.saveMessage(any())).thenReturn(true);
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob", "bob", "alice",
                 "hi", 5L, MessageStatus.SENT.name());
@@ -263,7 +311,6 @@ class MessageServiceTest {
 
     @Test
     void receivingTheSameInboundMessageTwiceShouldStillBeConsideredPersistedBothTimes() {
-        when(persistence.saveMessage(any())).thenReturn(true);
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob", "bob", "alice",
                 "hi", 5L, MessageStatus.SENT.name());
@@ -293,6 +340,104 @@ class MessageServiceTest {
         messageService.acknowledgeDelivery("m1");
 
         verify(persistence).updateMessageStatus("m1", MessageStatus.SENT);
+    }
+
+    @Test
+    void resetClocksShouldDiscardCachedCountersAndReloadFromPersistence() {
+        when(wsService.sendMessage(any())).thenReturn(true);
+        when(persistence.getLastLogicalTimestamp("alice-bob")).thenReturn(0L);
+
+        Message first = messageService.send(
+                "alice", "alice-bob", "bob", "hi");
+        Message second = messageService.send(
+                "alice", "alice-bob", "bob", "hi again");
+        assertEquals(1L, first.getLogicalTimestamp());
+        assertEquals(2L, second.getLogicalTimestamp());
+
+        messageService.resetClocks();
+
+        Message afterReset = messageService.send(
+                "charlie", "alice-bob", "bob", "hi after reset");
+        assertEquals(1L, afterReset.getLogicalTimestamp());
+        verify(persistence, times(2)).getLastLogicalTimestamp("alice-bob");
+    }
+
+    @Test
+    void receiveAndPersistUsesMappedServerStatusInsteadOfOverloadingSent() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 5L, "DELIVERING");
+
+        Message result = messageService.receiveAndPersist(dto);
+
+        assertEquals(MessageStatus.DELIVERING, result.getStatus());
+        verify(persistence).saveMessage(result);
+    }
+
+    @Test
+    void acknowledgeDeliveryMapsExplicitServerStatuses() {
+        messageService.acknowledgeDelivery("m1", "STORED");
+        messageService.acknowledgeDelivery("m2", "DELIVERED");
+        messageService.acknowledgeDelivery("m3", "FAILED");
+
+        verify(persistence).updateMessageStatus("m1", MessageStatus.STORED);
+        verify(persistence).updateMessageStatus("m2", MessageStatus.DELIVERED);
+        verify(persistence).updateMessageStatus("m3", MessageStatus.FAILED);
+    }
+
+    @Test
+    void sendShouldRejectContentExceedingConfiguredMaxLength() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxMessageLength", 5);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> messageService.send(
+                        "alice", "alice-bob",
+                        "bob", "exceeding content"));
+
+        verify(persistence, never()).saveMessage(any());
+        verifyNoInteractions(wsService);
+    }
+
+    @Test
+    void flushOutboxShouldIsolatePoisonMessageAfterMaxDeliveryAttempts() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxDeliveryAttempts", 2);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        Message poison = createPendingMessage("poison1", 1L);
+        when(persistence.loadPendingOutbound("alice"))
+                .thenReturn(List.of(poison));
+        when(persistence.getDeliveryAttempts("poison1"))
+                .thenReturn(0, 1, 2);
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+        assertEquals(1, messageService.flushOutbox("alice"));
+        assertEquals(0, messageService.flushOutbox("alice"));
+
+        verify(wsService, times(2)).sendMessage(any());
+        verify(persistence, times(2))
+                .incrementDeliveryAttempts("poison1");
+        verify(persistence).updateMessageStatus("poison1", MessageStatus.FAILED);
+    }
+
+    @Test
+    void flushOutboxShouldMarkOversizedStoredMessageAsFailedWithoutTransmitting() {
+        AppProperties props = new AppProperties();
+        ReflectionTestUtils.setField(props, "maxMessageLength", 4);
+        MessageService messageService = new MessageService(wsService, persistence, props);
+
+        Message oversized = createPendingMessage("big1", 1L);
+        when(persistence.loadPendingOutbound("alice"))
+                .thenReturn(List.of(oversized));
+
+        assertEquals(0, messageService.flushOutbox("alice"));
+
+        verifyNoInteractions(wsService);
+        verify(persistence).updateMessageStatus("big1", MessageStatus.FAILED);
     }
 
     private Message createPendingMessage(String messageId, long logicalTimestamp) {

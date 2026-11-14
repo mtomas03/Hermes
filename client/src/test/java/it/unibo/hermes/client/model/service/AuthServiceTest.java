@@ -3,6 +3,7 @@ package it.unibo.hermes.client.model.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import it.unibo.hermes.client.infrastructure.config.AppProperties;
+import it.unibo.hermes.client.infrastructure.exception.AuthException;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class AuthServiceTest {
 
@@ -73,6 +75,33 @@ class AuthServiceTest {
 
         StepVerifier.create(service.register("alice", "password123"))
                 .expectErrorMatches(e -> e.getMessage().contains("Registration failed"))
+                .verify();
+    }
+
+    @Test
+    void registrationWithConflictStatusShouldFailWithUsernameTakenReason() {
+        AuthService service = new AuthService(
+                stubClient(HttpStatus.CONFLICT, "Username 'alice' is already taken"), props);
+
+        StepVerifier.create(service.register("alice", "password123"))
+                .expectErrorSatisfies(e -> {
+                    AuthException authEx = assertInstanceOf(AuthException.class, e);
+                    assertEquals(AuthException.Reason.USERNAME_TAKEN, authEx.getReason());
+                    assertEquals(409, authEx.getStatusCode());
+                })
+                .verify();
+    }
+
+    @Test
+    void loginWithServiceUnavailableShouldFailWithServiceUnavailableReason() {
+        AuthService service = new AuthService(stubClient(HttpStatus.SERVICE_UNAVAILABLE, null), props);
+
+        StepVerifier.create(service.login("alice", "secret"))
+                .expectErrorSatisfies(e -> {
+                    AuthException authEx = assertInstanceOf(AuthException.class, e);
+                    assertEquals(AuthException.Reason.SERVICE_UNAVAILABLE, authEx.getReason());
+                    assertEquals(503, authEx.getStatusCode());
+                })
                 .verify();
     }
 }

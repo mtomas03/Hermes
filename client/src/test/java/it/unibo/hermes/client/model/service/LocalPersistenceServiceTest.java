@@ -1,10 +1,8 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.*;
-import it.unibo.hermes.client.model.repository.AuthTokenRepository;
-import it.unibo.hermes.client.model.repository.ConversationRepository;
-import it.unibo.hermes.client.model.repository.LocalUserRepository;
-import it.unibo.hermes.client.model.repository.MessageRepository;
+import it.unibo.hermes.client.model.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,13 +10,13 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class LocalPersistenceServiceTest {
@@ -171,5 +169,86 @@ class LocalPersistenceServiceTest {
 
         verify(authTokenRepository).clear();
         Mockito.verifyNoInteractions(messageRepository, conversationRepository);
+    }
+
+    @Test
+    void savingMessagesBatchShouldDelegateToMessageRepository() {
+        List<Message> batch = List.of(
+                new Message("m1", "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.SENT),
+                new Message("m2", "alice-bob",
+                        "bob", "alice",
+                        "hi", 2L, MessageStatus.STORED));
+
+        service.saveMessagesBatch(batch);
+
+        verify(messageRepository).upsertAll(batch);
+    }
+
+    @Test
+    void savingEmptyMessagesBatchShouldBeANoOp() {
+        service.saveMessagesBatch(List.of());
+
+        verifyNoInteractions(messageRepository);
+    }
+
+    @Test
+    void savingConversationsBatchShouldDelegateToConversationRepository() {
+        List<Conversation> batch = List.of(
+                new Conversation("alice-bob", new User("bob")),
+                new Conversation("alice-charlie", new User("charlie")));
+
+        service.saveConversationsBatch(batch);
+
+        verify(conversationRepository).upsertAll(batch);
+    }
+
+    @Test
+    void updatingMessageStatusesBatchShouldDelegateToMessageRepository() {
+        List<String> ids = List.of("m1", "m2");
+
+        service.updateMessageStatusesBatch(ids, MessageStatus.ACKNOWLEDGED);
+
+        verify(messageRepository).updateStatusBatch(ids, MessageStatus.ACKNOWLEDGED);
+    }
+
+    @Test
+    void batchOperationsWithDatabaseConnectionShouldExecuteInsideTransaction() {
+        SQLiteDatabaseConnection db = Mockito.mock(SQLiteDatabaseConnection.class);
+        doAnswer(invocation -> {
+            Runnable work = invocation.getArgument(0);
+            work.run();
+            return null;
+        }).when(db).inTransaction(any());
+
+        LocalPersistenceService transactionalService = new LocalPersistenceService(
+                db, messageRepository, conversationRepository, userRepository, authTokenRepository);
+
+        List<Message> messages = List.of(
+                new Message("m1", "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.SENT));
+        List<Conversation> conversations = List.of(
+                new Conversation("alice-bob", new User("bob")));
+        List<String> ids = List.of("m1");
+
+        transactionalService.saveConversationsBatch(conversations);
+        transactionalService.saveMessagesBatch(messages);
+        transactionalService.updateMessageStatusesBatch(ids, MessageStatus.ACKNOWLEDGED);
+
+        Mockito.verify(db, Mockito.times(3)).inTransaction(any());
+        verify(conversationRepository).upsertAll(conversations);
+        verify(messageRepository).upsertAll(messages);
+        verify(messageRepository).updateStatusBatch(ids, MessageStatus.ACKNOWLEDGED);
+    }
+
+    @Test
+    void updatingMessageStatusShouldPropagatePersistenceException() {
+        doThrow(new SQLitePersistenceException("db error", new SQLException("locked")))
+                .when(messageRepository).updateStatus("m1", MessageStatus.ACKNOWLEDGED);
+
+        assertThrows(SQLitePersistenceException.class,
+                () -> service.updateMessageStatus("m1", MessageStatus.ACKNOWLEDGED));
     }
 }

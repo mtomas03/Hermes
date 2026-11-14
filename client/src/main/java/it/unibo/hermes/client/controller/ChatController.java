@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.controller;
 
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.Conversation;
 import it.unibo.hermes.client.model.domain.Message;
@@ -11,6 +12,7 @@ import it.unibo.hermes.client.model.service.UserService;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.scheduler.Schedulers;
 
@@ -30,17 +32,29 @@ public class ChatController {
     private final LocalPersistenceService persistence;
     private final UserService userService;
     private final SyncController syncController;
+    private final AppProperties props;
 
     public ChatController(ClientStateModel stateModel,
                           MessageService messageService,
                           LocalPersistenceService persistence,
                           UserService userService,
                           SyncController syncController) {
+        this(stateModel, messageService, persistence, userService, syncController, new AppProperties());
+    }
+
+    @Autowired
+    public ChatController(ClientStateModel stateModel,
+                          MessageService messageService,
+                          LocalPersistenceService persistence,
+                          UserService userService,
+                          SyncController syncController,
+                          AppProperties props) {
         this.stateModel = stateModel;
         this.messageService = messageService;
         this.persistence = persistence;
         this.userService = userService;
         this.syncController = syncController;
+        this.props = props != null ? props : new AppProperties();
     }
 
     /**
@@ -78,15 +92,33 @@ public class ChatController {
         }
         if (content == null || content.isBlank()) return;
 
-        Message msg = messageService.send(
-                self.username(),
-                conv.conversationId(),
-                conv.recipientUsername().username(),
-                content.trim());
+        String trimmed = content.trim();
+        int maxMessageLength = props.getMaxMessageLength();
+        if (maxMessageLength > 0 && trimmed.length() > maxMessageLength) {
+            onError.accept("Message is too long " +
+                    "(max " + maxMessageLength + " characters).");
+            return;
+        }
 
-        // Optimistic append: view reacts via ObservableList listener
-        stateModel.appendMessage(msg);
-        log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
+        Schedulers.boundedElastic().schedule(() -> {
+            User current = stateModel.getCurrentUser();
+            if (current == null || !current.equals(self)) {
+                log.debug("Aborting outbound send: user logged out or changed");
+                return;
+            }
+
+            Message msg = messageService.send(
+                    self.username(),
+                    conv.conversationId(),
+                    conv.recipientUsername().username(),
+                    trimmed);
+
+            if (self.equals(stateModel.getCurrentUser())
+                    && conv.equals(stateModel.getSelectedConversation())) {
+                stateModel.appendMessage(msg);
+            }
+            log.debug("Sent message {} in {}", msg.getMessageId(), conv.conversationId());
+        });
     }
 
     /**
