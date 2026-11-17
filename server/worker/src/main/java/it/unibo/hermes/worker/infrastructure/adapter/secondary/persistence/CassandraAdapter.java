@@ -1,6 +1,8 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence;
 
 import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.application.exception.PersistenceInconsistencyException;
+import it.unibo.hermes.worker.domain.exception.InvalidMessageException;
 import it.unibo.hermes.worker.application.port.secondary.MessageStorePort;
 import it.unibo.hermes.worker.domain.model.DeliveryStatus;
 import it.unibo.hermes.worker.domain.model.Message;
@@ -72,6 +74,8 @@ public class CassandraAdapter implements MessageStorePort {
         try {
             return messageByIdRepository.findById(id)
                     .map(entity -> toStoredMessage(messageId, entity));
+        } catch (PersistenceInconsistencyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to read message {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot read message " + messageId, e);
@@ -95,6 +99,8 @@ public class CassandraAdapter implements MessageStorePort {
         try {
             MessageById authoritative = initialiseAuthoritative(message, messageId);
             return toStoredMessage(message.messageId(), authoritative);
+        } catch (PersistenceInconsistencyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to persist message {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot persist message " + messageId, e);
@@ -157,6 +163,8 @@ public class CassandraAdapter implements MessageStorePort {
 
             projectToConversation(messageId, entity, authoritative);
 
+        } catch (PersistenceInconsistencyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to update message delivery status {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot update status for message " + messageId, e);
@@ -182,6 +190,8 @@ public class CassandraAdapter implements MessageStorePort {
                 return;
             }
             completeFromAuthoritative(messageId, entityOpt.get());
+        } catch (PersistenceInconsistencyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to reconcile status projection of message {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot reconcile status for message " + messageId, e);
@@ -253,7 +263,8 @@ public class CassandraAdapter implements MessageStorePort {
         if (rows.isEmpty()) {
             log.error("Message {} has status {} but no row in messages_by_conversation: tables diverged",
                     messageId, status);
-            throw new IllegalStateException("Missing messages_by_conversation row for message " + messageId);
+            throw new PersistenceInconsistencyException(
+                    "Missing messages_by_conversation row for message " + messageId);
         }
         String projectedName = (String) rows.getFirst().get("delivery_status");
         Optional<DeliveryStatus> projected = DeliveryStatus.fromName(projectedName);
@@ -265,20 +276,28 @@ public class CassandraAdapter implements MessageStorePort {
         }
         log.error("Message {} projection is '{}' but the authoritative status is {}: tables diverged",
                 messageId, projectedName, status);
-        throw new IllegalStateException("Diverged status for message " + messageId);
+        throw new PersistenceInconsistencyException("Diverged status for message " + messageId);
     }
 
     private StoredMessage toStoredMessage(String messageId, MessageById entity) {
-        return new StoredMessage(
-                new Message(entity.getMessageId().toString(), entity.getConversationId(),
-                        entity.getSenderUsername(), entity.getRecipientUsername(),
-                        entity.getContent(), entity.getLogicalTimestamp()),
-                storedStatus(messageId, entity));
+        try {
+            return new StoredMessage(
+                    new Message(entity.getMessageId().toString(), entity.getConversationId(),
+                            entity.getSenderUsername(), entity.getRecipientUsername(),
+                            entity.getContent(), entity.getLogicalTimestamp()
+                    ), storedStatus(messageId, entity));
+        } catch (InvalidMessageException e) {
+            log.error("Message {} has invalid data: {}", messageId, e.getMessage());
+            throw new PersistenceInconsistencyException(
+                    "Stored message " + messageId + " violates the message invariants: "
+                            + e.getMessage(), e);
+        }
     }
 
     private DeliveryStatus storedStatus(String messageId, MessageById entity) {
         return DeliveryStatus.fromName(entity.getDeliveryStatus()).orElseThrow(() ->
-                new IllegalStateException("Message " + messageId + " has an unrecognised status '"
+                new PersistenceInconsistencyException(
+                        "Message " + messageId + " has an unrecognised status '"
                         + entity.getDeliveryStatus() + "'"));
     }
 

@@ -53,10 +53,19 @@ public class KafkaConfig {
     @Bean
     public DefaultErrorHandler deliveryErrorHandler() {
         FixedBackOff backOff = new FixedBackOff(retryBackoffMs, maxRetryAttempts);
-        return new DefaultErrorHandler(
-                (record, exception) -> log.error(
-                        "Worker consumer failed after {} retries - topic={} partition={} offset={}: {}",
-                        maxRetryAttempts, record.topic(), record.partition(), record.offset(), exception.getMessage()),
+        DefaultErrorHandler handler = new DefaultErrorHandler(
+                (record, exception) -> {
+                    if (ConsumerFailurePolicy.isPoison(exception)) {
+                        log.error("Worker consumer skipped poison record - topic={} partition={} offset={}: {}",
+                                record.topic(), record.partition(), record.offset(), exception.getMessage());
+                    } else {
+                        log.error("Worker consumer failed after {} retries - topic={} partition={} offset={}: {}",
+                                maxRetryAttempts, record.topic(), record.partition(), record.offset(),
+                                exception.getMessage());
+                    }
+                },
                 backOff);
+        ConsumerFailurePolicy.NON_RETRYABLE.forEach(handler::addNotRetryableExceptions);
+        return handler;
     }
 }

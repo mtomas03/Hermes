@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence;
 
 import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.application.exception.PersistenceInconsistencyException;
 import it.unibo.hermes.worker.domain.model.DeliveryStatus;
 import it.unibo.hermes.worker.domain.model.Message;
 import it.unibo.hermes.worker.domain.model.StoredMessage;
@@ -503,8 +504,7 @@ class CassandraAdapterTest {
         givenProjectionRows(List.of());
 
         assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class);
+                .isInstanceOf(PersistenceInconsistencyException.class);
     }
 
     @Test
@@ -515,8 +515,7 @@ class CassandraAdapterTest {
         givenProjectionRows(List.of(Map.of("delivery_status", "PENDING")));
 
         assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class);
+                .isInstanceOf(PersistenceInconsistencyException.class);
     }
 
     @Test
@@ -528,7 +527,7 @@ class CassandraAdapterTest {
                         "hi", 1L, "SOMETHING_ELSE")));
 
         assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED))
-                .isInstanceOf(PersistenceUnavailableException.class);
+                .isInstanceOf(PersistenceInconsistencyException.class);
         verifyNoInteractions(cqlOperations);
     }
 
@@ -639,7 +638,20 @@ class CassandraAdapterTest {
                         "hi", 1L, "SOMETHING_ELSE")));
 
         assertThatThrownBy(() -> cassandraAdapter.findById(id.toString()))
-                .isInstanceOf(PersistenceUnavailableException.class);
+                .isInstanceOf(PersistenceInconsistencyException.class);
+    }
+
+    @Test
+    void storedRowThatViolatesTheMessageInvariantsIsAnInconsistencyAndNotARetryableOutage() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(
+                new MessageById(id, "alice-bob",
+                        "alice", "bob",
+                        null, 1L, DeliveryStatus.PENDING.name())));
+
+        assertThatThrownBy(() -> cassandraAdapter.findById(id.toString()))
+                .isInstanceOf(PersistenceInconsistencyException.class)
+                .hasMessageContaining(id.toString());
     }
 
     private void persist(Message message) {

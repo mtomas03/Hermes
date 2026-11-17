@@ -22,4 +22,15 @@ public record Message(
         Long logicalTimestamp,
         MessageStatus status
 ) {
+    public Message withStatus(MessageStatus newStatus) {
+        return new Message(
+                messageId,
+                conversationId,
+                senderUsername,
+                recipientUsername,
+                content,
+                logicalTimestamp,
+                newStatus
+        );
+    }
 }

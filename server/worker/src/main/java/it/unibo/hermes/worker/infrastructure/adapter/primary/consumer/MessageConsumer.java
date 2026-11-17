@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.DeliveryPort;
 import it.unibo.hermes.worker.infrastructure.adapter.primary.mapper.MessageEventMapper;
 import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,18 +36,20 @@ public class MessageConsumer {
         log.debug("Received message-created event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageEvent event = deserialize(record.value());
+        MessageEvent event = deserialize(record);
         log.info("Processing MessageEvent - messageId={} sender={} recipient={}",
                 event.messageId(), event.senderUsername(), event.recipientUsername());
 
         deliveryPort.processMessage(MessageEventMapper.toDomain(event));
     }
 
-    private MessageEvent deserialize(String json) {
+    private MessageEvent deserialize(ConsumerRecord<String, String> record) {
         try {
-            return objectMapper.readValue(json, MessageEvent.class);
+            return objectMapper.readValue(record.value(), MessageEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageEvent: " + json, e);
+            throw new MalformedEventException("MessageEvent",
+                    record.topic(), record.partition(), record.offset(),
+                    e.getClass().getSimpleName());
         }
     }
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.DeliveryPort;
 import it.unibo.hermes.worker.domain.exception.InvalidMessageException;
 import it.unibo.hermes.worker.domain.model.Message;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,11 +77,11 @@ class MessageConsumerTest {
     }
 
     @Test
-    void shouldThrowIllegalArgumentExceptionAndNotProcessWhenJSONPayloadIsMalformed() {
+    void shouldThrowAndNotProcessWhenPayloadIsMalformed() {
         ConsumerRecord<String, String> malformedRecord = createRecord("not-valid-json");
 
         assertThatThrownBy(() -> consumer.consume(malformedRecord))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(MalformedEventException.class)
                 .hasMessageContaining("Cannot deserialize MessageEvent");
 
         verifyNoInteractions(deliveryPort);

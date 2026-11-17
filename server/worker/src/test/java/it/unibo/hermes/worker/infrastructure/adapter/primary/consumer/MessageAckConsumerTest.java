@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.AcknowledgementPort;
 import it.unibo.hermes.worker.domain.model.Acknowledgement;
 import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,7 @@ class MessageAckConsumerTest {
         ConsumerRecord<String, String> malformedRecord = createRecord("{ invalid json syntax ");
 
         assertThatThrownBy(() -> consumer.consume(malformedRecord))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(MalformedEventException.class)
                 .hasMessageContaining("Cannot deserialize MessageAckEvent");
 
         verifyNoInteractions(acknowledgementPort);

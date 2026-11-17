@@ -5,6 +5,7 @@ import it.unibo.hermes.worker.application.port.primary.AcknowledgementPort;
 import it.unibo.hermes.worker.domain.exception.InvalidAcknowledgementException;
 import it.unibo.hermes.worker.infrastructure.adapter.primary.mapper.AcknowledgementEventMapper;
 import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +39,7 @@ public class MessageAckConsumer {
         log.debug("Received message-acknowledged event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageAckEvent event = deserialize(record.value());
+        MessageAckEvent event = deserialize(record);
         log.info("Processing MessageAckEvent - messageId={} recipient={}",
                 event.messageId(), event.recipientUsername());
 
@@ -49,11 +50,13 @@ public class MessageAckConsumer {
         }
     }
 
-    private MessageAckEvent deserialize(String json) {
+    private MessageAckEvent deserialize(ConsumerRecord<String, String> record) {
         try {
-            return objectMapper.readValue(json, MessageAckEvent.class);
+            return objectMapper.readValue(record.value(), MessageAckEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageAckEvent: " + json, e);
+            throw new MalformedEventException("MessageAckEvent",
+                    record.topic(), record.partition(), record.offset(),
+                    e.getClass().getSimpleName());
         }
     }
 }
