@@ -1,12 +1,14 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence;
 
-import it.unibo.hermes.worker.domain.DeliveryStatus;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.worker.domain.model.DeliveryStatus;
+import it.unibo.hermes.worker.domain.model.Message;
+import it.unibo.hermes.worker.domain.model.StoredMessage;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.entity.ConversationByUser;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.entity.MessageById;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.exception.PersistenceUnavailableException;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.repository.ConversationByUserRepository;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.repository.MessageByIdRepository;
-import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.cassandra.core.CassandraOperations;
@@ -15,11 +17,12 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 
 /**
- * Cassandra adapter managing writes across {@code message_by_id},
- * {@code messages_by_conversation}, and {@code conversations_by_user} tables.
+ * Secondary adapter implementing {@link MessageStorePort} on top of Cassandra by managing the
+ * {@code message_by_id} table (authoritative), the {@code messages_by_conversation} and
+ * {@code conversations_by_user} tables (projections derived from it).
  */
 @Component
-public class CassandraAdapter {
+public class CassandraAdapter implements MessageStorePort {
 
     private static final Logger log = LoggerFactory.getLogger(CassandraAdapter.class);
 
@@ -58,70 +61,8 @@ public class CassandraAdapter {
         this.cassandraOperations = cassandraOperations;
     }
 
-    private static void verifyImmutableFields(MessageEvent event, MessageById stored) {
-        List<String> mismatches = new ArrayList<>();
-        if (!Objects.equals(event.conversationId(), stored.getConversationId())) {
-            mismatches.add("conversationId");
-        }
-        if (!Objects.equals(event.senderUsername(), stored.getSenderUsername())) {
-            mismatches.add("senderUsername");
-        }
-        if (!Objects.equals(event.recipientUsername(), stored.getRecipientUsername())) {
-            mismatches.add("recipientUsername");
-        }
-        if (!Objects.equals(event.content(), stored.getContent())) {
-            mismatches.add("content");
-        }
-        if (!Objects.equals(event.logicalTimestamp(), stored.getLogicalTimestamp())) {
-            mismatches.add("logicalTimestamp");
-        }
-        if (!mismatches.isEmpty()) {
-            throw new IllegalStateException("Message " + stored.getMessageId()
-                    + " already exists with different immutable fields " + mismatches);
-        }
-    }
-
-    /**
-     * Initialises a new message in {@code PENDING} status across Cassandra tables, ensuring idempotency
-     * and preventing delivery status regression in concurrent or duplicate execution scenarios.
-     *
-     * <p>This method is safe against duplicate Kafka events, retries and concurrent workers:
-     * <ol>
-     *   <li>The authoritative record in {@code message_by_id} is created using a conditional insert.
-     *       If rejected, the existing stored record is reloaded without overwriting its current delivery status.</li>
-     *   <li>Immutable message fields are verified against the stored record to detect data conflicts.</li>
-     *   <li>The projection row in {@code messages_by_conversation} is conditionally created and participant index
-     *       records in {@code conversation_by_user} are written.</li>
-     *   <li>The projection's delivery status is reconciled to match the authoritative status.</li>
-     * </ol>
-     *
-     * @param event the message event payload to persist
-     * @throws PersistenceUnavailableException if Cassandra is unreachable, immutable fields diverge or persistence fails
-     */
-    public void persistMessage(MessageEvent event) {
-        UUID messageId = UUID.fromString(event.messageId());
-
-        try {
-            MessageById authoritative = initializeAuthoritative(event, messageId);
-            completeFromAuthoritative(messageId.toString(), authoritative);
-
-            log.debug("Message {} persisted and conversation indexed for {} and {}",
-                    messageId, event.senderUsername(), event.recipientUsername());
-
-        } catch (Exception e) {
-            log.error("Failed to persist message {}: {}", messageId, e.getMessage());
-            throw new PersistenceUnavailableException("Cannot persist message " + messageId, e);
-        }
-    }
-
-    /**
-     * Finds the recipient of a stored message in the authoritative table.
-     *
-     * @param messageId the message identifier
-     * @return the recipient username, or empty if the identifier is malformed or the message is unknown
-     * @throws PersistenceUnavailableException if Cassandra is unreachable or the read fails
-     */
-    public Optional<String> findRecipientUsername(String messageId) {
+    @Override
+    public Optional<StoredMessage> findById(String messageId) {
         UUID id;
         try {
             id = UUID.fromString(messageId);
@@ -129,10 +70,34 @@ public class CassandraAdapter {
             return Optional.empty();
         }
         try {
-            return messageByIdRepository.findById(id).map(MessageById::getRecipientUsername);
+            return messageByIdRepository.findById(id)
+                    .map(entity -> toStoredMessage(messageId, entity));
         } catch (Exception e) {
-            log.error("Failed to read recipient of message {}: {}", messageId, e.getMessage());
+            log.error("Failed to read message {}: {}", messageId, e.getMessage());
             throw new PersistenceUnavailableException("Cannot read message " + messageId, e);
+        }
+    }
+
+    /**
+     * Creates a new message record if it does not exist yet, or returns the existing one.
+     *
+     * <p> The record in {@code message_by_id} is created using a conditional insert (lightweight transaction).
+     * If it is rejected, because the message exists already, the stored record is reloaded and returned
+     * without overwriting its current delivery status.
+     *
+     * @param message the message to record
+     * @return the authoritative record: the one just created or the one that was already stored
+     * @throws PersistenceUnavailableException if Cassandra is unreachable or the write fails
+     */
+    @Override
+    public StoredMessage createIfAbsent(Message message) {
+        UUID messageId = UUID.fromString(message.messageId());
+        try {
+            MessageById authoritative = initialiseAuthoritative(message, messageId);
+            return toStoredMessage(message.messageId(), authoritative);
+        } catch (Exception e) {
+            log.error("Failed to persist message {}: {}", messageId, e.getMessage());
+            throw new PersistenceUnavailableException("Cannot persist message " + messageId, e);
         }
     }
 
@@ -157,11 +122,12 @@ public class CassandraAdapter {
      * repairs the projection. Until then the sync endpoint may show the previous status
      * (eventual consistency, not atomicity).
      *
-     * @param messageId the message identifier
-     * @param newStatus the requested status
+     * @param messageId    the message identifier
+     * @param targetStatus the requested status
      * @throws PersistenceUnavailableException if Cassandra fails or the two tables diverge
      */
-    public void updateMessageDeliveryStatus(String messageId, DeliveryStatus newStatus) {
+    @Override
+    public void advanceStatus(String messageId, DeliveryStatus targetStatus) {
         try {
             UUID id = UUID.fromString(messageId);
             Optional<MessageById> entityOpt = messageByIdRepository.findById(id);
@@ -172,21 +138,21 @@ public class CassandraAdapter {
             MessageById entity = entityOpt.get();
             DeliveryStatus authoritative = storedStatus(messageId, entity);
 
-            if (authoritative == newStatus) {
-                log.debug("Message {} is already {} (duplicate request)", messageId, newStatus);
-            } else if (DeliveryStatus.canTransition(authoritative, newStatus)) {
-                if (conditionalStatusUpdate(BY_ID_UPDATE, newStatus, id)) {
-                    log.debug("Message {} status updated: {} -> {}", messageId, authoritative, newStatus);
-                    authoritative = newStatus;
+            if (authoritative == targetStatus) {
+                log.debug("Message {} is already {} (duplicate request)", messageId, targetStatus);
+            } else if (DeliveryStatus.canTransition(authoritative, targetStatus)) {
+                if (conditionalStatusUpdate(BY_ID_UPDATE, targetStatus, id)) {
+                    log.debug("Message {} status updated: {} -> {}", messageId, authoritative, targetStatus);
+                    authoritative = targetStatus;
                 } else {
                     // another writer moved the message first: continue from what is really stored
                     authoritative = reloadStoredStatus(messageId, id);
                     log.info("Message {} transition {} -> {} rejected: concurrently moved to {}",
-                            messageId, entity.getDeliveryStatus(), newStatus, authoritative);
+                            messageId, entity.getDeliveryStatus(), targetStatus, authoritative);
                 }
             } else {
                 log.debug("Message {} transition {} -> {} not allowed, keeping {}",
-                        messageId, authoritative, newStatus, authoritative);
+                        messageId, authoritative, targetStatus, authoritative);
             }
 
             projectToConversation(messageId, entity, authoritative);
@@ -207,7 +173,8 @@ public class CassandraAdapter {
      * @param messageId the message identifier
      * @throws PersistenceUnavailableException if Cassandra fails or the two tables diverge
      */
-    public void reconcileConversationProjection(String messageId) {
+    @Override
+    public void reconcileProjection(String messageId) {
         try {
             UUID id = UUID.fromString(messageId);
             Optional<MessageById> entityOpt = messageByIdRepository.findById(id);
@@ -221,37 +188,22 @@ public class CassandraAdapter {
         }
     }
 
-    /**
-     * Checks if a message has already been processed.
-     *
-     * @param messageId the message identifier
-     * @return true if the message has already been processed, false otherwise
-     */
-    public boolean isAlreadyProcessed(String messageId) {
-        UUID id = UUID.fromString(messageId);
-        return messageByIdRepository.findById(id)
-                .map(e -> !DeliveryStatus.PENDING.name().equals(e.getDeliveryStatus()))
-                .orElse(false);
-    }
-
-    private MessageById initializeAuthoritative(MessageEvent event, UUID messageId) {
+    private MessageById initialiseAuthoritative(Message message, UUID messageId) {
         Optional<MessageById> existing = messageByIdRepository.findById(messageId);
         if (existing.isPresent()) {
             log.debug("Message {} already exists with status {}, not re-initialising",
                     messageId, existing.get().getDeliveryStatus());
-            verifyImmutableFields(event, existing.get());
             return existing.get();
         }
 
-        long logicalTimestamp = Objects.requireNonNull(event.logicalTimestamp(),
-                "logicalTimestamp is required to persist message " + messageId);
+        long logicalTimestamp = message.logicalTimestamp();
         boolean applied = cassandraOperations.getCqlOperations().execute(BY_ID_INSERT,
-                messageId, event.conversationId(), event.senderUsername(), event.recipientUsername(),
-                event.content(), logicalTimestamp);
+                messageId, message.conversationId(), message.senderUsername(), message.recipientUsername(),
+                message.content(), logicalTimestamp);
         if (applied) {
             log.debug("Message {} initialised as PENDING", messageId);
-            return new MessageById(messageId, event.conversationId(), event.senderUsername(),
-                    event.recipientUsername(), event.content(), logicalTimestamp, DeliveryStatus.PENDING.name());
+            return new MessageById(messageId, message.conversationId(), message.senderUsername(),
+                    message.recipientUsername(), message.content(), logicalTimestamp, DeliveryStatus.PENDING.name());
         }
 
         MessageById winner = messageByIdRepository.findById(messageId).orElseThrow(() ->
@@ -259,7 +211,6 @@ public class CassandraAdapter {
                         + " was rejected but the row cannot be read back"));
         log.info("Message {} was initialised concurrently, continuing from status {}",
                 messageId, winner.getDeliveryStatus());
-        verifyImmutableFields(event, winner);
         return winner;
     }
 
@@ -315,6 +266,14 @@ public class CassandraAdapter {
         log.error("Message {} projection is '{}' but the authoritative status is {}: tables diverged",
                 messageId, projectedName, status);
         throw new IllegalStateException("Diverged status for message " + messageId);
+    }
+
+    private StoredMessage toStoredMessage(String messageId, MessageById entity) {
+        return new StoredMessage(
+                new Message(entity.getMessageId().toString(), entity.getConversationId(),
+                        entity.getSenderUsername(), entity.getRecipientUsername(),
+                        entity.getContent(), entity.getLogicalTimestamp()),
+                storedStatus(messageId, entity));
     }
 
     private DeliveryStatus storedStatus(String messageId, MessageById entity) {

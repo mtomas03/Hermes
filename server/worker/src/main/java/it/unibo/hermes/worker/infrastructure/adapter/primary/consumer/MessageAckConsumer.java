@@ -2,7 +2,8 @@ package it.unibo.hermes.worker.infrastructure.adapter.primary.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.AcknowledgementPort;
-import it.unibo.hermes.worker.domain.DeliveryStatus;
+import it.unibo.hermes.worker.domain.exception.InvalidAcknowledgementException;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.mapper.AcknowledgementEventMapper;
 import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
@@ -11,12 +12,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Kafka consumer for the {@code message-acknowledged} topic.
- *
- * <p> Records on this topic are produced by the Gateway after the recipient's
- * WebSocket session sends an explicit delivery confirmation. The consumer
- * delegates to {@link AcknowledgementPort} to advance the message state
- * to {@link DeliveryStatus#ACKNOWLEDGED}.
+ * Kafka consumer for the {@code message-acknowledged} topic:
+ * receives and processes message acknowledgements.
  */
 @Component
 public class MessageAckConsumer {
@@ -45,7 +42,11 @@ public class MessageAckConsumer {
         log.info("Processing MessageAckEvent - messageId={} recipient={}",
                 event.messageId(), event.recipientUsername());
 
-        acknowledgementPort.processAcknowledgement(event);
+        try {
+            acknowledgementPort.processAcknowledgement(AcknowledgementEventMapper.toDomain(event));
+        } catch (InvalidAcknowledgementException e) {
+            log.warn("Ignoring invalid ACK: {}", e.getMessage());
+        }
     }
 
     private MessageAckEvent deserialize(String json) {

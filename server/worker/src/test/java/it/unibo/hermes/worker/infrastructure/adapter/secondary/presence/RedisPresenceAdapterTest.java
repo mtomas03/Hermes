@@ -1,6 +1,6 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.presence;
 
-import it.unibo.hermes.worker.domain.PresenceInfo;
+import it.unibo.hermes.worker.domain.model.PresenceInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,7 +44,7 @@ class RedisPresenceAdapterTest {
         when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOperations);
         when(hashOperations.entries("hermes:presence:alice")).thenReturn(Map.of());
 
-        Optional<PresenceInfo> result = adapter.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.findPresence("alice");
 
         assertThat(result).isEmpty();
     }
@@ -53,9 +53,10 @@ class RedisPresenceAdapterTest {
     void shouldReturnOnlinePresenceWhenFlagIsTrue() {
         when(redisTemplate.<String, String>opsForHash()).thenReturn(hashOperations);
         when(hashOperations.entries("hermes:presence:alice"))
-                .thenReturn(Map.of("online", "true", "gatewayId", "gateway-1"));
+                .thenReturn(Map.of("online", "true",
+                        "gatewayId", "gateway-1"));
 
-        Optional<PresenceInfo> result = adapter.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.findPresence("alice");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isTrue();
@@ -68,7 +69,7 @@ class RedisPresenceAdapterTest {
         when(hashOperations.entries("hermes:presence:bob"))
                 .thenReturn(Map.of("online", "false"));
 
-        Optional<PresenceInfo> result = adapter.getPresence("bob");
+        Optional<PresenceInfo> result = adapter.findPresence("bob");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isFalse();
@@ -80,7 +81,7 @@ class RedisPresenceAdapterTest {
         when(hashOperations.entries("hermes:presence:carol"))
                 .thenReturn(Map.of("gatewayId", "gateway-2"));
 
-        Optional<PresenceInfo> result = adapter.getPresence("carol");
+        Optional<PresenceInfo> result = adapter.findPresence("carol");
 
         assertThat(result).isPresent();
         assertThat(result.get().online()).isFalse();
@@ -88,9 +89,10 @@ class RedisPresenceAdapterTest {
 
     @Test
     void shouldReturnEmptyWhenRedisThrows() {
-        when(redisTemplate.opsForHash()).thenThrow(new RuntimeException("Redis connection refused"));
+        when(redisTemplate.opsForHash()).thenThrow(
+                new RuntimeException("Redis connection refused"));
 
-        Optional<PresenceInfo> result = adapter.getPresence("alice");
+        Optional<PresenceInfo> result = adapter.findPresence("alice");
 
         assertThat(result).isEmpty();
     }

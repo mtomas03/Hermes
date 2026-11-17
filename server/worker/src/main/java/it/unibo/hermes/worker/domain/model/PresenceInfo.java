@@ -1,8 +1,7 @@
-package it.unibo.hermes.worker.domain;
+package it.unibo.hermes.worker.domain.model;
 
 /**
- * Transient presence and routing information for a user,
- * read from the Redis cache.
+ * Transient presence and routing information for a user.
  *
  * @param username  the user whose reachability this describes
  * @param online    true if the user currently has an active WebSocket session

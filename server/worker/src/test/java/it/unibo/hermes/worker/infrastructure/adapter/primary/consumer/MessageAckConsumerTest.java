@@ -2,9 +2,8 @@ package it.unibo.hermes.worker.infrastructure.adapter.primary.consumer;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import it.unibo.hermes.worker.application.service.AcknowledgementService;
+import it.unibo.hermes.worker.application.port.primary.AcknowledgementPort;
+import it.unibo.hermes.worker.domain.model.Acknowledgement;
 import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,18 +24,16 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class MessageAckConsumerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
     @Mock
-    private AcknowledgementService acknowledgementServiceImpl;
+    private AcknowledgementPort acknowledgementPort;
 
     private MessageAckConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new MessageAckConsumer(acknowledgementServiceImpl, objectMapper);
+        consumer = new MessageAckConsumer(acknowledgementPort, objectMapper);
     }
 
     private ConsumerRecord<String, String> createRecord(String jsonPayload) {
@@ -44,18 +41,17 @@ class MessageAckConsumerTest {
     }
 
     @Test
-    void shouldDeserializeAndForwardValidEventToAcknowledgementService() throws Exception {
+    void shouldDeserializeMapToTheDomainAndInvokeTheAcknowledgementUseCase() throws Exception {
         String messageId = UUID.randomUUID().toString();
-        MessageAckEvent expectedEvent = new MessageAckEvent(messageId, "bob");
-        String jsonPayload = objectMapper.writeValueAsString(expectedEvent);
+        String json = objectMapper.writeValueAsString(
+                new MessageAckEvent(messageId, "bob"));
 
-        consumer.consume(createRecord(jsonPayload));
+        consumer.consume(createRecord(json));
 
-        ArgumentCaptor<MessageAckEvent> captor = ArgumentCaptor.forClass(MessageAckEvent.class);
-        verify(acknowledgementServiceImpl).processAcknowledgement(captor.capture());
-        MessageAckEvent actualEvent = captor.getValue();
-        assertThat(actualEvent.messageId()).isEqualTo(messageId);
-        assertThat(actualEvent.recipientUsername()).isEqualTo("bob");
+        ArgumentCaptor<Acknowledgement> captor = ArgumentCaptor.forClass(Acknowledgement.class);
+        verify(acknowledgementPort).processAcknowledgement(captor.capture());
+        assertThat(captor.getValue()).isEqualTo(
+                new Acknowledgement(messageId, "bob"));
     }
 
     @Test
@@ -66,6 +62,22 @@ class MessageAckConsumerTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Cannot deserialize MessageAckEvent");
 
-        verifyNoInteractions(acknowledgementServiceImpl);
+        verifyNoInteractions(acknowledgementPort);
+    }
+
+    @Test
+    void shouldIgnoreAckWithoutRecipientWithoutReachingTheUseCase() {
+        String json = "{\"messageId\":\"" + UUID.randomUUID() + "\"}";
+
+        consumer.consume(createRecord(json)); // does not throw: nothing to retry
+
+        verifyNoInteractions(acknowledgementPort);
+    }
+
+    @Test
+    void shouldIgnoreAckWithAMalformedMessageId() {
+        consumer.consume(createRecord("{\"messageId\":\"not-a-messageId\",\"recipientUsername\":\"bob\"}"));
+
+        verifyNoInteractions(acknowledgementPort);
     }
 }
