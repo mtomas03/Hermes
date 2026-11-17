@@ -1,12 +1,12 @@
-package it.unibo.hermes.worker.domain;
+package it.unibo.hermes.worker.domain.model;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Lifecycle states of a message as tracked by the Delivery Worker.
- * State transitions are monotone: a message never moves backward.
+ * Lifecycle delivery status of a message as tracked by the worker.
+ * Delivery transitions are monotone: a message never moves backward.
  */
 public enum DeliveryStatus {
 
@@ -17,13 +17,13 @@ public enum DeliveryStatus {
     PENDING,
 
     /**
-     * Recipient is offline; message is durably stored in Cassandra
+     * Recipient is offline; message is durably stored in message store database
      * and will be retrieved during the next synchronisation pull.
      */
     STORED,
 
     /**
-     * Delivery event has been forwarded to the target gateway.
+     * Message has been forwarded to the target gateway.
      * Waiting for the WebSocket push and subsequent acknowledgement.
      */
     DELIVERING,

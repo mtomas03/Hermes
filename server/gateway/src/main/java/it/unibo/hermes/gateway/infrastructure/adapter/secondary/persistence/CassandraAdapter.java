@@ -6,6 +6,7 @@ import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
 import it.unibo.hermes.gateway.domain.model.Conversation;
 import it.unibo.hermes.gateway.domain.model.Message;
+import it.unibo.hermes.gateway.domain.model.MessageStatus;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.ConversationByUser;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
 import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.cassandra.ConversationByUserRepository;
@@ -175,6 +176,9 @@ public class CassandraAdapter implements ConversationStorePort, MessageStorePort
         return readOrUnavailable(
                 () -> messageRepository.findAllByConversationId(conversationId).stream()
                         .map(CassandraAdapter::toDomain)
+                        .map(msg -> msg.status() == MessageStatus.PENDING
+                                ? msg.withStatus(MessageStatus.STORED)
+                                : msg)
                         .toList(),
                 "full message read for conversation '" + conversationId + "'");
     }

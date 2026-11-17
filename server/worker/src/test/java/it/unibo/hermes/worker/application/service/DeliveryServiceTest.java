@@ -1,15 +1,19 @@
 package it.unibo.hermes.worker.application.service;
 
-import it.unibo.hermes.worker.domain.DeliveryStatus;
-import it.unibo.hermes.worker.domain.PresenceInfo;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.CassandraAdapter;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.exception.PersistenceUnavailableException;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.presence.RedisPresenceAdapter;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.producer.MessageDeliveryProducer;
-import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
+import it.unibo.hermes.worker.application.exception.DeliveryPublicationException;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.application.port.secondary.MessageDeliveryProducerPort;
+import it.unibo.hermes.worker.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.worker.application.port.secondary.PresenceLookupPort;
+import it.unibo.hermes.worker.domain.exception.MessageConflictException;
+import it.unibo.hermes.worker.domain.model.DeliveryStatus;
+import it.unibo.hermes.worker.domain.model.Message;
+import it.unibo.hermes.worker.domain.model.PresenceInfo;
+import it.unibo.hermes.worker.domain.model.StoredMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -26,111 +30,194 @@ class DeliveryServiceTest {
     private static final String GATEWAY_ID = "gateway-1";
 
     @Mock
-    private CassandraAdapter cassandraAdapter;
+    private MessageStorePort messageRepository;
 
     @Mock
-    private RedisPresenceAdapter presenceAdapter;
+    private PresenceLookupPort presenceLookup;
 
     @Mock
-    private MessageDeliveryProducer messageDeliveryProducer;
+    private MessageDeliveryProducerPort deliveryEventPublisher;
 
     private DeliveryService deliveryService;
 
+    private static StoredMessage stored(Message message, DeliveryStatus status) {
+        return new StoredMessage(message, status);
+    }
+
     @BeforeEach
     void setUp() {
-        deliveryService = new DeliveryService(cassandraAdapter, presenceAdapter, messageDeliveryProducer);
+        deliveryService = new DeliveryService(messageRepository, presenceLookup, deliveryEventPublisher);
     }
 
-    private MessageEvent createSampleEvent() {
-        return new MessageEvent(
-                UUID.randomUUID().toString(),
-                "alice-bob",
-                "alice", "bob", "hi",
-                1L);
-    }
-
-    @Test
-    void shouldSkipAlreadyProcessedDuplicateEvent() {
-        MessageEvent event = createSampleEvent();
-        when(cassandraAdapter.isAlreadyProcessed(event.messageId())).thenReturn(true);
-
-        deliveryService.processMessage(event);
-
-        verify(cassandraAdapter, never()).persistMessage(any());
-        verify(cassandraAdapter).reconcileConversationProjection(event.messageId());
-        verifyNoInteractions(presenceAdapter, messageDeliveryProducer);
+    private Message createMessage() {
+        return new Message(
+                UUID.randomUUID().toString(), "alice-bob",
+                "alice", "bob",
+                "hi", 1L);
     }
 
     @Test
-    void shouldDeliverImmediatelyWhenRecipientIsOnline() {
-        MessageEvent event = createSampleEvent();
-        when(cassandraAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceAdapter.getPresence("bob"))
+    void shouldSkipAlreadyProcessedDuplicateEventButRealignTheProjection() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.of(stored(message, DeliveryStatus.DELIVERING)));
+
+        deliveryService.processMessage(message);
+
+        verify(messageRepository, never()).createIfAbsent(any());
+        verify(messageRepository).reconcileProjection(message.messageId());
+        verify(messageRepository, never()).advanceStatus(any(), any());
+        verifyNoInteractions(presenceLookup, deliveryEventPublisher);
+    }
+
+    @Test
+    void shouldPersistThenDeliverImmediatelyWhenRecipientIsOnline() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(message))
+                .thenReturn(stored(message, DeliveryStatus.PENDING));
+        when(presenceLookup.findPresence("bob"))
                 .thenReturn(Optional.of(PresenceInfo.online("bob", GATEWAY_ID)));
 
-        deliveryService.processMessage(event);
+        deliveryService.processMessage(message);
 
-        verify(cassandraAdapter).persistMessage(event);
-        verify(messageDeliveryProducer).publishDeliveryEvent(event, GATEWAY_ID);
-        verify(cassandraAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
+        InOrder inOrder = inOrder(messageRepository, presenceLookup, deliveryEventPublisher);
+        inOrder.verify(messageRepository).createIfAbsent(message);
+        inOrder.verify(messageRepository).reconcileProjection(message.messageId());
+        inOrder.verify(presenceLookup).findPresence("bob");
+        inOrder.verify(deliveryEventPublisher).publish(message, GATEWAY_ID);
+        inOrder.verify(messageRepository).advanceStatus(message.messageId(), DeliveryStatus.DELIVERING);
+        verify(messageRepository, never()).advanceStatus(message.messageId(), DeliveryStatus.STORED);
     }
 
     @Test
-    void shouldFallBackToStoredWhenPublishingDeliveryEventFails() {
-        MessageEvent event = createSampleEvent();
-        when(cassandraAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceAdapter.getPresence("bob"))
+    void shouldFallBackToStoredWhenPublishingTheDeliveryEventFails() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(message))
+                .thenReturn(stored(message, DeliveryStatus.PENDING));
+        when(presenceLookup.findPresence("bob"))
                 .thenReturn(Optional.of(PresenceInfo.online("bob", GATEWAY_ID)));
-        doThrow(new RuntimeException("Kafka delivery stream timeout"))
-                .when(messageDeliveryProducer).publishDeliveryEvent(event, GATEWAY_ID);
+        doThrow(new DeliveryPublicationException("broker down", new RuntimeException("timeout")))
+                .when(deliveryEventPublisher).publish(message, GATEWAY_ID);
 
-        deliveryService.processMessage(event);
+        deliveryService.processMessage(message);
 
-        verify(cassandraAdapter).persistMessage(event);
-        verify(cassandraAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verify(cassandraAdapter, never()).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.DELIVERING);
+        verify(messageRepository).advanceStatus(message.messageId(), DeliveryStatus.STORED);
+        verify(messageRepository, never()).advanceStatus(message.messageId(), DeliveryStatus.DELIVERING);
     }
 
     @Test
     void shouldStoreMessageWhenRecipientIsOffline() {
-        MessageEvent event = createSampleEvent();
-        when(cassandraAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceAdapter.getPresence("bob"))
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(message))
+                .thenReturn(stored(message, DeliveryStatus.PENDING));
+        when(presenceLookup.findPresence("bob"))
                 .thenReturn(Optional.of(PresenceInfo.offline("bob")));
 
-        deliveryService.processMessage(event);
+        deliveryService.processMessage(message);
 
-        verify(cassandraAdapter).persistMessage(event);
-        verify(cassandraAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verifyNoInteractions(messageDeliveryProducer);
+        verify(messageRepository).advanceStatus(message.messageId(), DeliveryStatus.STORED);
+        verifyNoInteractions(deliveryEventPublisher);
     }
 
     @Test
     void shouldStoreMessageWhenPresenceInformationIsMissing() {
-        MessageEvent event = createSampleEvent();
-        when(cassandraAdapter.isAlreadyProcessed(event.messageId())).thenReturn(false);
-        when(presenceAdapter.getPresence("bob")).thenReturn(Optional.empty());
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(message))
+                .thenReturn(stored(message, DeliveryStatus.PENDING));
+        when(presenceLookup.findPresence("bob"))
+                .thenReturn(Optional.empty());
 
-        deliveryService.processMessage(event);
+        deliveryService.processMessage(message);
 
-        verify(cassandraAdapter).persistMessage(event);
-        verify(cassandraAdapter).updateMessageDeliveryStatus(event.messageId(), DeliveryStatus.STORED);
-        verifyNoInteractions(messageDeliveryProducer);
+        verify(messageRepository).advanceStatus(message.messageId(), DeliveryStatus.STORED);
+        verifyNoInteractions(deliveryEventPublisher);
     }
 
     @Test
-    void persistenceFailureIsPropagatedForRetryAndNothingIsDeliveredOrAdvanced() {
-        MessageEvent event = new MessageEvent(
-                UUID.randomUUID().toString(), "alice-bob",
-                "alice", "bob", "hi", 1L);
-        when(cassandraAdapter.isAlreadyProcessed(any())).thenReturn(false);
-        doThrow(new PersistenceUnavailableException("Cassandra down",
-                new RuntimeException("timeout"))).when(cassandraAdapter).persistMessage(event);
+    void persistenceFailureIsPropagatedForRetryAndNothingIsRoutedOrAdvanced() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(message))
+                .thenThrow(new PersistenceUnavailableException(
+                        "down", new RuntimeException("timeout")));
 
-        assertThatThrownBy(() -> deliveryService.processMessage(event))
+        assertThatThrownBy(() -> deliveryService.processMessage(message))
                 .isInstanceOf(PersistenceUnavailableException.class);
 
-        verifyNoInteractions(messageDeliveryProducer, presenceAdapter);
-        verify(cassandraAdapter, never()).updateMessageDeliveryStatus(any(), any());
+        verify(messageRepository, never()).reconcileProjection(any());
+        verify(messageRepository, never()).advanceStatus(any(), any());
+        verifyNoInteractions(presenceLookup, deliveryEventPublisher);
+    }
+
+    @Test
+    void redeliveryAfterACrashFollowingPersistenceRoutesTheMessageWithoutCreatingItTwice() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(
+                        Optional.of(stored(message, DeliveryStatus.PENDING))); // persisted, crashed before routing
+        when(presenceLookup.findPresence("bob"))
+                .thenReturn(
+                        Optional.of(PresenceInfo.online("bob", GATEWAY_ID)));
+
+        deliveryService.processMessage(message);
+
+        verify(messageRepository, never()).createIfAbsent(any());
+        verify(messageRepository).reconcileProjection(message.messageId());
+        verify(deliveryEventPublisher).publish(message, GATEWAY_ID);
+        verify(messageRepository).advanceStatus(message.messageId(), DeliveryStatus.DELIVERING);
+    }
+
+    @Test
+    void aLateDuplicateOfAnAcknowledgedMessageNeverRoutesOrChangesItsStatus() {
+        Message message = createMessage();
+        when(messageRepository.findById(message.messageId()))
+                .thenReturn(Optional.of(stored(message, DeliveryStatus.ACKNOWLEDGED)));
+
+        deliveryService.processMessage(message);
+
+        verify(messageRepository, never()).advanceStatus(any(), any());
+        verifyNoInteractions(presenceLookup, deliveryEventPublisher);
+    }
+
+    @Test
+    void reusedIdentifierWithDifferentContentIsRejectedBeforeAnythingIsAlignedOrRouted() {
+        Message original = createMessage();
+        Message conflicting = new Message(original.messageId(), original.conversationId(),
+                original.senderUsername(), original.recipientUsername(), "tampered", 1L);
+        when(messageRepository.findById(original.messageId())).thenReturn(Optional.empty());
+        when(messageRepository.createIfAbsent(conflicting)).thenReturn(stored(original, DeliveryStatus.PENDING));
+
+        assertThatThrownBy(() -> deliveryService.processMessage(conflicting))
+                .isInstanceOf(MessageConflictException.class)
+                .hasMessageContaining("content");
+
+        verify(messageRepository, never()).reconcileProjection(any());
+        verify(messageRepository, never()).advanceStatus(any(), any());
+        verifyNoInteractions(presenceLookup, deliveryEventPublisher);
+    }
+
+    @Test
+    void pendingMessageAlreadyStoredWithDifferentDataIsAlsoRejected() {
+        Message original = createMessage();
+        Message conflicting = new Message(original.messageId(), original.conversationId(),
+                "charlie", original.recipientUsername(), original.content(), 1L);
+        when(messageRepository.findById(original.messageId()))
+                .thenReturn(Optional.of(stored(original, DeliveryStatus.PENDING)));
+
+        assertThatThrownBy(() -> deliveryService.processMessage(conflicting))
+                .isInstanceOf(MessageConflictException.class)
+                .hasMessageContaining("senderUsername");
+
+        verify(messageRepository, never()).reconcileProjection(any());
+        verifyNoInteractions(presenceLookup, deliveryEventPublisher);
     }
 }

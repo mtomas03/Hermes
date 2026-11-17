@@ -2,8 +2,9 @@ package it.unibo.hermes.worker.infrastructure.adapter.primary.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.DeliveryPort;
-import it.unibo.hermes.worker.configuration.KafkaConfig;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.mapper.MessageEventMapper;
 import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,25 +12,18 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Kafka consumer for the {@code message-created} topic.
- *
- * <p> Each record corresponds to a message that was accepted and forwarded by
- * the Gateway to Kafka. This consumer deserializes the JSON
- * payload and hands it off to {@link DeliveryPort} for processing.
- *
- * <p> Error handling and bounded retry are configured globally in
- * {@link KafkaConfig}. If all retries are exhausted,
- * the record is logged and skipped.
+ * Kafka consumer for the {@code message-created} topic:
+ * receives events when a new message is created and triggers the delivery process.
  */
 @Component
-public class MessageCreatedConsumer {
+public class MessageConsumer {
 
-    private static final Logger log = LoggerFactory.getLogger(MessageCreatedConsumer.class);
+    private static final Logger log = LoggerFactory.getLogger(MessageConsumer.class);
 
     private final DeliveryPort deliveryPort;
     private final ObjectMapper objectMapper;
 
-    public MessageCreatedConsumer(DeliveryPort deliveryPort, ObjectMapper objectMapper) {
+    public MessageConsumer(DeliveryPort deliveryPort, ObjectMapper objectMapper) {
         this.deliveryPort = deliveryPort;
         this.objectMapper = objectMapper;
     }
@@ -42,18 +36,20 @@ public class MessageCreatedConsumer {
         log.debug("Received message-created event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageEvent event = deserialize(record.value());
+        MessageEvent event = deserialize(record);
         log.info("Processing MessageEvent - messageId={} sender={} recipient={}",
                 event.messageId(), event.senderUsername(), event.recipientUsername());
 
-        deliveryPort.processMessage(event);
+        deliveryPort.processMessage(MessageEventMapper.toDomain(event));
     }
 
-    private MessageEvent deserialize(String json) {
+    private MessageEvent deserialize(ConsumerRecord<String, String> record) {
         try {
-            return objectMapper.readValue(json, MessageEvent.class);
+            return objectMapper.readValue(record.value(), MessageEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageEvent: " + json, e);
+            throw new MalformedEventException("MessageEvent",
+                    record.topic(), record.partition(), record.offset(),
+                    e.getClass().getSimpleName());
         }
     }
 }

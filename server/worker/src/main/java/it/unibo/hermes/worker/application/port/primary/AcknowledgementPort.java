@@ -1,16 +1,18 @@
 package it.unibo.hermes.worker.application.port.primary;
 
-import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.domain.model.Acknowledgement;
 
 /**
- * Port interface for processing delivery acknowledgements from Gateway instances.
+ * Primary port interface for recording that a recipient has acknowledged the receipt of a message.
  */
 public interface AcknowledgementPort {
 
     /**
-     * Processes a delivery acknowledgement event.
+     * Moves the acknowledged message to {@code ACKNOWLEDGED}.
      *
-     * @param event the message acknowledgement event containing the message ID and recipient username
+     * @param acknowledgement the acknowledgement to process
+     * @throws PersistenceUnavailableException if the status could not be updated
      */
-    void processAcknowledgement(MessageAckEvent event);
+    void processAcknowledgement(Acknowledgement acknowledgement);
 }

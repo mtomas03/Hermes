@@ -5,7 +5,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
+import it.unibo.hermes.worker.application.exception.DeliveryPublicationException;
+import it.unibo.hermes.worker.domain.model.Message;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,12 +46,11 @@ class MessageDeliveryProducerTest {
         producer = new MessageDeliveryProducer(kafkaTemplate, objectMapper, DELIVERY_TOPIC);
     }
 
-    private MessageEvent createSampleEvent() {
-        return new MessageEvent(
-                UUID.randomUUID().toString(),
-                "alice-bob",
-                "alice", "bob", "hi",
-                1L);
+    private Message createMessage() {
+        return new Message(
+                UUID.randomUUID().toString(), "alice-bob",
+                "alice", "bob",
+                "hi", 1L);
     }
 
     @SuppressWarnings("unchecked")
@@ -65,13 +65,13 @@ class MessageDeliveryProducerTest {
 
     @Test
     void shouldPublishSerializedDeliveryEventKeyedByGatewayId() {
-        MessageEvent source = createSampleEvent();
+        Message source = createMessage();
         SendResult<String, String> sendResult = createSuccessfulSendResult();
         CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResult);
         when(kafkaTemplate.send(eq(DELIVERY_TOPIC), eq(GATEWAY_ID), anyString()))
                 .thenReturn(future);
 
-        producer.publishDeliveryEvent(source, GATEWAY_ID);
+        producer.publish(source, GATEWAY_ID);
 
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(kafkaTemplate).send(eq(DELIVERY_TOPIC), eq(GATEWAY_ID), payloadCaptor.capture());
@@ -86,32 +86,34 @@ class MessageDeliveryProducerTest {
     }
 
     @Test
-    void shouldThrowIllegalStateExceptionWhenJsonSerializationFails() throws Exception {
+    void shouldThrowDeliveryPublicationExceptionWhenJsonSerializationFails() throws Exception {
         ObjectMapper spyObjectMapper = spy(objectMapper);
         MessageDeliveryProducer customProducer = new MessageDeliveryProducer(
                 kafkaTemplate, spyObjectMapper, DELIVERY_TOPIC);
-        MessageEvent source = createSampleEvent();
+        Message source = createMessage();
         doThrow(new JsonProcessingException("JSON mapping error") {
         })
                 .when(spyObjectMapper).writeValueAsString(any());
 
-        assertThatThrownBy(() -> customProducer.publishDeliveryEvent(source, GATEWAY_ID))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Failed to serialize MessageDeliveryEvent for message " + source.messageId());
+        assertThatThrownBy(() -> customProducer.publish(source, GATEWAY_ID))
+                .isInstanceOf(DeliveryPublicationException.class)
+                .hasMessageContaining("Failed to serialize MessageDeliveryEvent for message "
+                        + source.messageId());
 
         verifyNoInteractions(kafkaTemplate);
     }
 
     @Test
-    void shouldThrowRuntimeExceptionWhenKafkaSendFails() {
-        MessageEvent source = createSampleEvent();
+    void shouldThrowDeliveryPublicationExceptionWhenKafkaSendFails() {
+        Message source = createMessage();
         CompletableFuture<SendResult<String, String>> failedFuture = new CompletableFuture<>();
         failedFuture.completeExceptionally(new RuntimeException("Kafka broker unreachable"));
 
         when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenReturn(failedFuture);
 
-        assertThatThrownBy(() -> producer.publishDeliveryEvent(source, GATEWAY_ID))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Failed to publish delivery event for message " + source.messageId());
+        assertThatThrownBy(() -> producer.publish(source, GATEWAY_ID))
+                .isInstanceOf(DeliveryPublicationException.class)
+                .hasMessageContaining("Failed to publish delivery event for message "
+                        + source.messageId());
     }
 }

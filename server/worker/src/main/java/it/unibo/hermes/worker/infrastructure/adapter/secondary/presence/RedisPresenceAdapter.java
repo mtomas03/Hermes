@@ -1,6 +1,7 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.presence;
 
-import it.unibo.hermes.worker.domain.PresenceInfo;
+import it.unibo.hermes.worker.application.port.secondary.PresenceLookupPort;
+import it.unibo.hermes.worker.domain.model.PresenceInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,10 +13,11 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Redis adapter providing read-only presence lookups for Worker routing decisions.
+ * Secondary adapter implementing {@link PresenceLookupPort} on top of Redis
+ * by reading user presence information from a Redis hash.
  */
 @Component
-public class RedisPresenceAdapter {
+public class RedisPresenceAdapter implements PresenceLookupPort {
 
     private static final Logger log = LoggerFactory.getLogger(RedisPresenceAdapter.class);
 
@@ -35,7 +37,8 @@ public class RedisPresenceAdapter {
         this.fieldGatewayId = fieldGatewayId;
     }
 
-    public Optional<PresenceInfo> getPresence(String username) {
+    @Override
+    public Optional<PresenceInfo> findPresence(String username) {
         String redisKey = keyPrefix + username;
         try {
             HashOperations<String, String, String> ops = redisTemplate.opsForHash();
