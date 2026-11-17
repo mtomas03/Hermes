@@ -46,8 +46,9 @@ hermes:
     message-delivery: ${KAFKA_TOPIC_DELIVERY:message-delivery}
 
   delivery:
-    max-retry-attempts: 3
     retry-backoff-ms: 1000
+    retry-max-backoff-ms: 30000
+    stuck-alert-attempts: 10
 
   presence:
     key-prefix: "hermes:presence:"
