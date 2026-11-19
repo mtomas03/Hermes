@@ -168,9 +168,16 @@ public class ChatView {
         Runnable doSend = () -> {
             String txt = inputArea.getText();
             if (!txt.isBlank()) {
-                chatController.sendMessage(txt, err ->
-                        JOptionPane.showMessageDialog(null, "Cannot send: " + err, "Error", JOptionPane.ERROR_MESSAGE));
-                inputArea.setText("");
+                boolean[] failed = {false};
+                chatController.sendMessage(txt, err -> {
+                    failed[0] = true;
+                    JOptionPane.showMessageDialog(null,
+                            "Cannot send: " + err,
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                });
+                if (!failed[0]) {
+                    inputArea.setText("");
+                }
             }
         };
 
@@ -221,7 +228,7 @@ public class ChatView {
     private void updateChatTitle() {
         Conversation selected = stateModel.getSelectedConversation();
         if (selected != null) {
-            chatTitleLabel.setText("Chat with: " + selected.recipientUsername().username());
+            chatTitleLabel.setText("Chat with: " + selected.otherUser().username());
         } else {
             chatTitleLabel.setText("Enter a username to start");
         }

@@ -1,13 +1,13 @@
 package it.unibo.hermes.gateway.application.service;
 
 import it.unibo.hermes.gateway.application.port.primary.SyncPort;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SyncResponseDto.MessageDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.CassandraAdapter;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.cassandra.MessageByConversation;
+import it.unibo.hermes.gateway.application.port.secondary.ConversationStorePort;
+import it.unibo.hermes.gateway.application.port.secondary.MessageStorePort;
+import it.unibo.hermes.gateway.domain.exception.ConversationAccessDeniedException;
+import it.unibo.hermes.gateway.domain.model.ConversationIds;
+import it.unibo.hermes.gateway.domain.model.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -20,54 +20,36 @@ public class SyncService implements SyncPort {
 
     private static final Logger log = LoggerFactory.getLogger(SyncService.class);
 
-    private final CassandraAdapter cassandraAdapter;
+    private final ConversationStorePort conversationStore;
+    private final MessageStorePort messageStore;
 
     /**
      * Creates the synchronisation service.
      *
-     * @param cassandraAdapter the adapter managing message persistence queries in Cassandra
+     * @param conversationStore the port providing conversation membership
+     * @param messageStore      the port providing message history
      */
-    public SyncService(CassandraAdapter cassandraAdapter) {
-        this.cassandraAdapter = cassandraAdapter;
+    public SyncService(ConversationStorePort conversationStore, MessageStorePort messageStore) {
+        this.conversationStore = conversationStore;
+        this.messageStore = messageStore;
     }
 
-    /**
-     * Retrieves the complete message history of a conversation.
-     *
-     * @param requestingUser the user requesting the synchronisation
-     * @param conversationId the ID of the conversation to synchronise
-     * @return the SyncResponseDto containing the full message history
-     */
     @Override
-    public SyncResponseDto syncConversation(String requestingUser,
-                                            String conversationId) {
-
+    public List<Message> syncConversation(String requestingUser, String conversationId) {
         validateParticipant(requestingUser, conversationId);
 
-        List<MessageByConversation> messages =
-                cassandraAdapter.findAllMessages(conversationId);
-
-        List<MessageDto> dtos = messages.stream()
-                .map(m -> new MessageDto(
-                        m.getMessageId().toString(),
-                        m.getConversationId(),
-                        m.getSenderUsername(),
-                        m.getRecipientUsername(),
-                        m.getContent(),
-                        m.getLogicalTimestamp(),
-                        m.getDeliveryStatus().name()
-                ))
-                .toList();
+        List<Message> messages = messageStore.findAllByConversation(conversationId);
 
         log.debug("Full sync for user '{}' in '{}': {} messages returned",
-                requestingUser, conversationId, dtos.size());
+                requestingUser, conversationId, messages.size());
 
-        return new SyncResponseDto(conversationId, dtos);
+        return messages;
     }
 
     private void validateParticipant(String username, String conversationId) {
-        if (!cassandraAdapter.isParticipant(username, conversationId)) {
-            throw new AccessDeniedException(
+        if (!ConversationIds.isParticipant(conversationId, username)
+                || !conversationStore.isParticipant(username, conversationId)) {
+            throw new ConversationAccessDeniedException(
                     "User '" + username + "' is not a participant of conversation '" + conversationId + "'");
         }
     }

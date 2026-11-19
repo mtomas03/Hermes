@@ -24,10 +24,10 @@ public final class TestIds {
      * Builds a unique identifier for this test, recognisable as E2E-generated in server logs.
      *
      * @param role a short role label
-     * @return an identifier of the form {@code e2e-<role>-<shortId>}
+     * @return an identifier of the form {@code e2e_<role>_<shortId>}
      */
     public static String testId(String role) {
-        return "e2e-" + role + "-" + shortId();
+        return "e2e_" + role.toLowerCase() + "_" + shortId();
     }
 
     /**

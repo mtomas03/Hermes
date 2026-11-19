@@ -1,42 +1,44 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import it.unibo.hermes.gateway.domain.model.MessageStatus;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.MessageFromGatewayDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket.WebSocketSessionRegistry;
+import it.unibo.hermes.gateway.application.model.DeliverMessageCommand;
+import it.unibo.hermes.gateway.application.port.primary.MessageDeliveryPort;
 import it.unibo.hermes.gateway.infrastructure.event.MessageDeliveryEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Kafka consumer in Gateway for the {@code message-delivery} topic.
+ * Kafka consumer in Gateway for the {@code message-delivery} topic:
+ * consumes delivery events and forwards them to the delivery port.
  */
 @Component
 public class MessageDeliveryConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(MessageDeliveryConsumer.class);
 
-    private final SimpMessagingTemplate messagingTemplate;
-    private final WebSocketSessionRegistry sessionRegistry;
+    private final MessageDeliveryPort messageDeliveryPort;
     private final ObjectMapper objectMapper;
-    private final String currentGatewayId;
 
-    public MessageDeliveryConsumer(
-            SimpMessagingTemplate messagingTemplate,
-            WebSocketSessionRegistry sessionRegistry,
-            ObjectMapper objectMapper,
-            @Value("${hermes.gateway.instance-id:gateway-1}") String currentGatewayId) {
-        this.messagingTemplate = messagingTemplate;
-        this.sessionRegistry = sessionRegistry;
+    /**
+     * Creates the delivery consumer.
+     *
+     * @param messageDeliveryPort the primary port delivering messages to connected clients
+     * @param objectMapper        the mapper deserialising delivery events
+     */
+    public MessageDeliveryConsumer(MessageDeliveryPort messageDeliveryPort, ObjectMapper objectMapper) {
+        this.messageDeliveryPort = messageDeliveryPort;
         this.objectMapper = objectMapper;
-        this.currentGatewayId = currentGatewayId;
     }
 
+    /**
+     * Consumes a delivery event and forwards it to the delivery port.
+     *
+     * @param record the Kafka record carrying a serialised {@link MessageDeliveryEvent}
+     * @throws IllegalArgumentException if the event cannot be deserialised into a {@link MessageDeliveryEvent}
+     */
     @KafkaListener(
             topics = "${hermes.topics.message-delivery:message-delivery}",
             groupId = "${spring.kafka.consumer.group-id:hermes-gateway}-${hermes.gateway.instance-id:gateway-1}",
@@ -47,36 +49,14 @@ public class MessageDeliveryConsumer {
 
         MessageDeliveryEvent event = deserialize(record.value());
 
-        if (!currentGatewayId.equals(event.gatewayId())) {
-            log.trace("Skipping message {} intended for gateway {}", event.messageId(), event.gatewayId());
-            return;
-        }
-
-        if (!sessionRegistry.isConnected(event.recipientUsername())) {
-            log.warn("Recipient {} not connected on gateway {} - client may have disconnected",
-                    event.recipientUsername(), currentGatewayId);
-            return;
-        }
-
-        log.info("Delivering message {} via STOMP to recipient {}", event.messageId(), event.recipientUsername());
-
-        MessageFromGatewayDto payload = new MessageFromGatewayDto(
+        messageDeliveryPort.deliver(new DeliverMessageCommand(
                 event.messageId(),
                 event.conversationId(),
                 event.senderUsername(),
                 event.recipientUsername(),
+                event.gatewayId(),
                 event.content(),
-                event.logicalTimestamp(),
-                MessageStatus.DELIVERED.name()
-        );
-
-        try {
-            messagingTemplate.convertAndSendToUser(event.recipientUsername(), "/queue/messages", payload);
-            log.debug("Message {} pushed successfully to user {}", event.messageId(), event.recipientUsername());
-        } catch (Exception e) {
-            log.error("Failed to push message {} to recipient {}: {}",
-                    event.messageId(), event.recipientUsername(), e.getMessage());
-        }
+                event.logicalTimestamp()));
     }
 
     private MessageDeliveryEvent deserialize(String json) {

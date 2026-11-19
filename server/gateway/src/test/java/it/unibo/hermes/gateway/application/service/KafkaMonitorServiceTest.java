@@ -1,41 +1,39 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.SystemMessageDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket.WebSocketSessionRegistry;
+import it.unibo.hermes.gateway.application.port.secondary.BackboneHealthPort;
+import it.unibo.hermes.gateway.application.port.secondary.ClientNotifierPort;
+import it.unibo.hermes.gateway.application.port.secondary.ConnectedClientsPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaMonitorServiceTest {
 
     @Mock
-    private KafkaHealthProbe kafkaHealthProbe;
+    private BackboneHealthPort kafkaHealthProbe;
     @Mock
-    private WebSocketSessionRegistry registry;
+    private ConnectedClientsPort registry;
     @Mock
-    private SimpMessagingTemplate messagingTemplate;
+    private ClientNotifierPort clientNotifier;
 
     private KafkaMonitorService monitorService;
 
     @BeforeEach
     void setUp() {
-        monitorService = new KafkaMonitorService(kafkaHealthProbe, registry, messagingTemplate);
+        monitorService = new KafkaMonitorService(kafkaHealthProbe, registry, clientNotifier);
     }
 
     @Test
     void shouldStartAsAvailableByDefault() {
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
     }
 
     @Test
@@ -44,7 +42,7 @@ class KafkaMonitorServiceTest {
 
         monitorService.checkBackbone();
 
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
         verifyNoInteractions(registry);
     }
 
@@ -54,7 +52,7 @@ class KafkaMonitorServiceTest {
 
         monitorService.checkBackbone();
 
-        assertThat(monitorService.isBackboneAvailable()).isFalse();
+        assertThat(monitorService.isMessageBackboneAvailable()).isFalse();
         verifyNoInteractions(registry);
     }
 
@@ -66,8 +64,8 @@ class KafkaMonitorServiceTest {
         monitorService.checkBackbone(); // true -> false
         monitorService.checkBackbone(); // false -> true, should broadcast
 
-        assertThat(monitorService.isBackboneAvailable()).isTrue();
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/system"), any(SystemMessageDto.class));
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
+        verify(clientNotifier).requestReconnect("alice", "BACKBONE_RECOVERED");
     }
 
     @Test
@@ -78,7 +76,7 @@ class KafkaMonitorServiceTest {
         monitorService.checkBackbone();
         monitorService.checkBackbone();
 
-        verifyNoInteractions(messagingTemplate);
+        verifyNoInteractions(clientNotifier);
     }
 
     @Test
@@ -86,11 +84,32 @@ class KafkaMonitorServiceTest {
         when(kafkaHealthProbe.isHealthy()).thenReturn(false, true);
         when(registry.allUsernames()).thenReturn(Set.of("failing-user", "healthy-user"));
         doThrow(new RuntimeException("broken pipe"))
-                .when(messagingTemplate).convertAndSendToUser(eq("failing-user"), eq("/queue/system"), any());
+                .when(clientNotifier).requestReconnect("failing-user", "BACKBONE_RECOVERED");
 
         monitorService.checkBackbone();
         monitorService.checkBackbone();
 
-        verify(messagingTemplate).convertAndSendToUser(eq("healthy-user"), eq("/queue/system"), any(SystemMessageDto.class));
+        verify(clientNotifier).requestReconnect("healthy-user", "BACKBONE_RECOVERED");
+    }
+
+    @Test
+    void reportedPublishFailureShouldImmediatelyMarkTheBackboneUnavailable() {
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
+
+        monitorService.reportBackboneFailure();
+
+        assertThat(monitorService.isMessageBackboneAvailable()).isFalse();
+    }
+
+    @Test
+    void probeShouldRestoreTheBackboneAfterAReportedFailureAndForceReconnect() {
+        when(registry.allUsernames()).thenReturn(Set.of("alice"));
+        when(kafkaHealthProbe.isHealthy()).thenReturn(true);
+        monitorService.reportBackboneFailure();
+
+        monitorService.checkBackbone();
+
+        assertThat(monitorService.isMessageBackboneAvailable()).isTrue();
+        verify(clientNotifier).requestReconnect("alice", "BACKBONE_RECOVERED");
     }
 }

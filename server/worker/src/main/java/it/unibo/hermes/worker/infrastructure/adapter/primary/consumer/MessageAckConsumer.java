@@ -2,8 +2,10 @@ package it.unibo.hermes.worker.infrastructure.adapter.primary.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.unibo.hermes.worker.application.port.primary.AcknowledgementPort;
-import it.unibo.hermes.worker.domain.DeliveryStatus;
+import it.unibo.hermes.worker.domain.exception.InvalidAcknowledgementException;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.mapper.AcknowledgementEventMapper;
 import it.unibo.hermes.worker.infrastructure.event.MessageAckEvent;
+import it.unibo.hermes.worker.infrastructure.adapter.primary.exception.MalformedEventException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,12 +13,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Kafka consumer for the {@code message-acknowledged} topic.
- *
- * <p> Records on this topic are produced by the Gateway after the recipient's
- * WebSocket session sends an explicit delivery confirmation. The consumer
- * delegates to {@link AcknowledgementPort} to advance the message state
- * to {@link DeliveryStatus#ACKNOWLEDGED}.
+ * Kafka consumer for the {@code message-acknowledged} topic:
+ * receives and processes message acknowledgements.
  */
 @Component
 public class MessageAckConsumer {
@@ -41,18 +39,24 @@ public class MessageAckConsumer {
         log.debug("Received message-acknowledged event - topic={} partition={} offset={}",
                 record.topic(), record.partition(), record.offset());
 
-        MessageAckEvent event = deserialize(record.value());
+        MessageAckEvent event = deserialize(record);
         log.info("Processing MessageAckEvent - messageId={} recipient={}",
                 event.messageId(), event.recipientUsername());
 
-        acknowledgementPort.processAcknowledgement(event);
+        try {
+            acknowledgementPort.processAcknowledgement(AcknowledgementEventMapper.toDomain(event));
+        } catch (InvalidAcknowledgementException e) {
+            log.warn("Ignoring invalid ACK: {}", e.getMessage());
+        }
     }
 
-    private MessageAckEvent deserialize(String json) {
+    private MessageAckEvent deserialize(ConsumerRecord<String, String> record) {
         try {
-            return objectMapper.readValue(json, MessageAckEvent.class);
+            return objectMapper.readValue(record.value(), MessageAckEvent.class);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Cannot deserialize MessageAckEvent: " + json, e);
+            throw new MalformedEventException("MessageAckEvent",
+                    record.topic(), record.partition(), record.offset(),
+                    e.getClass().getSimpleName());
         }
     }
 }

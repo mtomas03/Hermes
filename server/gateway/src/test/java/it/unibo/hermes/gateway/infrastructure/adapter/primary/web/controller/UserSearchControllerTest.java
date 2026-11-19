@@ -1,6 +1,8 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 
-import it.unibo.hermes.gateway.application.service.UserSearchService;
+import it.unibo.hermes.gateway.application.port.primary.UserSearchPort;
+import it.unibo.hermes.gateway.domain.exception.UserNotFoundException;
+import it.unibo.hermes.gateway.domain.model.UserProfile;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.UserDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,7 +21,7 @@ import static org.mockito.Mockito.when;
 class UserSearchControllerTest {
 
     @Mock
-    private UserSearchService userSearchService;
+    private UserSearchPort userSearchService;
 
     private UserSearchController controller;
 
@@ -31,7 +33,7 @@ class UserSearchControllerTest {
     @Test
     void searchUserShouldReturnUserDtoWhenFound() {
         UserDto expected = new UserDto("bob");
-        when(userSearchService.searchUserByUsername("bob")).thenReturn(expected);
+        when(userSearchService.searchUserByUsername("bob")).thenReturn(new UserProfile("bob"));
 
         ResponseEntity<UserDto> response = controller.searchUser("bob");
 
@@ -43,10 +45,10 @@ class UserSearchControllerTest {
     @Test
     void searchUserShouldPropagateExceptionWhenUserNotFound() {
         when(userSearchService.searchUserByUsername("ghost"))
-                .thenThrow(new IllegalArgumentException("User not found: ghost"));
+                .thenThrow(new UserNotFoundException("User not found: ghost"));
 
         assertThatThrownBy(() -> controller.searchUser("ghost"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UserNotFoundException.class)
                 .hasMessageContaining("User not found");
     }
 }

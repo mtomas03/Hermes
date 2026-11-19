@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.config.AppProperties;
 import it.unibo.hermes.client.infrastructure.exception.MessagePersistenceException;
 import it.unibo.hermes.client.model.domain.Message;
 import it.unibo.hermes.client.model.domain.MessageStatus;
@@ -7,8 +8,10 @@ import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.OutboundMessageDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -26,21 +29,31 @@ public class MessageService {
 
     private final WebSocketService wsService;
     private final LocalPersistenceService persistenceService;
+    private final AppProperties props;
     private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
+    private final AtomicBoolean flushAgain = new AtomicBoolean(false);
+    private final Set<String> messagesWaitingACK = ConcurrentHashMap.newKeySet();
 
     public MessageService(WebSocketService wsService, LocalPersistenceService persistenceService) {
+        this(wsService, persistenceService, new AppProperties());
+    }
+
+    @Autowired
+    public MessageService(WebSocketService wsService,
+                          LocalPersistenceService persistenceService,
+                          AppProperties props) {
         this.wsService = wsService;
         this.persistenceService = persistenceService;
+        this.props = props != null ? props : new AppProperties();
     }
 
     /**
      * Sends a message to {@code recipientUsername} in {@code conversationId}.
      *
-     * <p> The message is first stored in the local outbox (status {@link MessageStatus#PENDING}) and then
-     * submitted on the WebSocket. Submitting it does not prove that the Gateway received it,
-     * so it stays PENDING until the Gateway answers with its ACK.
-     * Until then, it is retransmitted with the same message ID each time the connection is re-established.
+     * <p> The message is first stored in the local outbox, with status {@link MessageStatus#PENDING},
+     * and then submitted on the WebSocket by triggering an outbox flush.
+     * This guarantees ordering and prevents race conditions with background reconnect flushes.
      *
      * @param senderUsername    the username of the sender (local user)
      * @param conversationId    the unique identifier of the conversation
@@ -52,6 +65,12 @@ public class MessageService {
                         String conversationId,
                         String recipientUsername,
                         String content) {
+        int maxMessageLength = props.getMaxMessageLength();
+        if (maxMessageLength > 0 && content != null && content.length() > maxMessageLength) {
+            throw new IllegalArgumentException(
+                    "Message content exceeds maximum length of " + maxMessageLength + " characters");
+        }
+
         AtomicLong clock = getConversationClock(conversationId);
         long currentClock = clock.incrementAndGet();
 
@@ -68,11 +87,7 @@ public class MessageService {
         persistenceService.saveMessage(local);
         log.debug("Saved outbound message locally: {}", messageId);
 
-        if (transmit(local)) {
-            log.info("Message submitted via WebSocket, awaiting server ACK: {}", messageId);
-        } else {
-            log.warn("Message kept in the outbox (WebSocket unavailable): {}", messageId);
-        }
+        flushOutbox(senderUsername);
         return local;
     }
 
@@ -80,48 +95,105 @@ public class MessageService {
      * Retransmits the messages of {@code senderUsername} that the server has not
      * confirmed: needed to be called when the STOMP session is ready to send.
      *
-     * <p> A message, that was received by the server but whose ACK was lost, is sent again.
-     * Messages are sent oldest first and the flush stops at the first failed submission,
-     * leaving the remaining ones {@link MessageStatus#PENDING} for the next reconnection.
+     * <p> Uses a coalescing "flush again" flag: if a flush is already active, it registers
+     * the request and returns immediately. The active flush will loop back and re-flush,
+     * ensuring no reconnect triggers are dropped.
      *
      * @param senderUsername the local user whose outbox is flushed
      * @return the number of messages submitted
      */
     public int flushOutbox(String senderUsername) {
+        flushAgain.set(true);
         if (!isFlushing.compareAndSet(false, true)) {
-            log.debug("Outbox flush already in progress");
+            log.debug("Outbox flush already in progress, coalesced requested pass");
             return 0;
         }
+
+        int totalSubmitted = 0;
         try {
-            int submitted = 0;
-            for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
-                if (!transmit(pending)) {
-                    log.warn("Outbox flush interrupted at message {}: {} submitted, rest kept pending",
-                            pending.getMessageId(), submitted);
-                    return submitted;
+            boolean keepFlushing;
+            do {
+                flushAgain.set(false);
+                int passSubmitted = 0;
+                int maxMessageLength = props.getMaxMessageLength();
+                int maxAttempts = props.getMaxDeliveryAttempts();
+
+                for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
+                    if (messagesWaitingACK.contains(pending.getMessageId())) {
+                        continue;
+                    }
+                    if (maxMessageLength > 0 && pending.getContent().length() > maxMessageLength) {
+                        log.error("Isolating oversized message {} ({} chars > max {}): marking FAILED",
+                                pending.getMessageId(), pending.getContent().length(), maxMessageLength);
+                        markRejected(pending.getMessageId());
+                        continue;
+                    }
+
+                    int priorAttempts = persistenceService.getDeliveryAttempts(pending.getMessageId());
+                    if (maxAttempts > 0 && priorAttempts >= maxAttempts) {
+                        log.error("Poison message {} exceeded max delivery attempts ({}/{}): marking FAILED",
+                                pending.getMessageId(), priorAttempts, maxAttempts);
+                        markRejected(pending.getMessageId());
+                        continue;
+                    }
+
+                    if (!transmit(pending)) {
+                        log.warn("Outbox flush interrupted at message {}: {} submitted this pass",
+                                pending.getMessageId(), passSubmitted);
+                        flushAgain.set(false);
+                        isFlushing.set(false);
+                        return totalSubmitted + passSubmitted;
+                    }
+                    messagesWaitingACK.add(pending.getMessageId());
+                    persistenceService.incrementDeliveryAttempts(pending.getMessageId());
+                    passSubmitted++;
                 }
-                submitted++;
+                totalSubmitted += passSubmitted;
+
+                isFlushing.set(false);
+                keepFlushing = flushAgain.get() && isFlushing.compareAndSet(false, true);
+            } while (keepFlushing);
+
+            if (totalSubmitted > 0) {
+                log.info("Outbox flushed: {} messages submitted, awaiting server ACK", totalSubmitted);
             }
-            if (submitted > 0) {
-                log.info("Outbox flushed: {} messages retransmitted, awaiting server ACK", submitted);
-            }
-            return submitted;
-        } finally {
+            return totalSubmitted;
+        } catch (Exception e) {
             isFlushing.set(false);
+            throw e;
         }
     }
 
     /**
-     * Converts an inbound DTO received from the server into a domain Message and persists it.
+     * Converts an inbound message DTO, received from the server,
+     * into a domain message and persists it.
      *
      * @param dto the inbound message DTO
-     * @return the persisted Message entity
+     * @return the persisted domain message
      * @throws MessagePersistenceException if the message could not be persisted
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
+        return receiveAndPersist(dto, null);
+    }
+
+    /**
+     * Same as {@link #receiveAndPersist(InboundMessageDto)}, but when {@code localUsername} is known
+     * it also creates the local conversation row if the message belongs to a conversation
+     * not yet known locally, atomically with the message.
+     *
+     * @param dto           the inbound message DTO
+     * @param localUsername the local user or {@code null} if unknown
+     * @return the persisted domain message
+     * @throws MessagePersistenceException if the message could not be persisted
+     */
+    public Message receiveAndPersist(InboundMessageDto dto, String localUsername) {
         AtomicLong clock = getConversationClock(dto.conversationId());
         long msgClock = dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L;
         clock.updateAndGet(current -> Math.max(current, msgClock) + 1);
+
+        MessageStatus initialStatus = MessageStatus
+                .fromServerStatus(dto.messageStatus())
+                .orElse(MessageStatus.STORED);
 
         Message msg = new Message(
                 dto.messageId(),
@@ -130,13 +202,35 @@ public class MessageService {
                 dto.recipientUsername(),
                 dto.content(),
                 dto.logicalTimestamp(),
-                MessageStatus.SENT);
+                initialStatus);
 
-        boolean persisted = persistenceService.saveMessage(msg);
+        boolean persisted = localUsername == null
+                ? persistenceService.saveMessage(msg)
+                : persistenceService.saveInboundMessage(msg, localUsername);
         if (!persisted) {
             throw new MessagePersistenceException(dto.messageId());
         }
         return msg;
+    }
+
+    /**
+     * Updates the delivery status of an outbound message based on the status reported
+     * by the server in {@code AckDto}, defaulting to {@link MessageStatus#SENT} if omitted.
+     *
+     * @param messageId    the unique identifier of the message to acknowledge
+     * @param serverStatus the status string reported by the gateway, may be {@code null}
+     */
+    public void acknowledgeDelivery(String messageId, String serverStatus) {
+        messagesWaitingACK.remove(messageId);
+        MessageStatus target = MessageStatus
+                .fromServerStatus(serverStatus)
+                .filter(s -> s != MessageStatus.PENDING)
+                .orElse(MessageStatus.SENT);
+        if (target == MessageStatus.FAILED) {
+            markRejected(messageId);
+            return;
+        }
+        persistenceService.updateMessageStatus(messageId, target);
     }
 
     /**
@@ -145,7 +239,17 @@ public class MessageService {
      * @param messageId the unique identifier of the message to acknowledge
      */
     public void acknowledgeDelivery(String messageId) {
-        persistenceService.updateMessageStatus(messageId, MessageStatus.SENT);
+        acknowledgeDelivery(messageId, null);
+    }
+
+    /**
+     * Marks an inbound message as acknowledged
+     * by updating its status to {@link MessageStatus#ACKNOWLEDGED}.
+     *
+     * @param messageId the unique identifier of the acknowledged message
+     */
+    public void markAcknowledged(String messageId) {
+        persistenceService.updateMessageStatus(messageId, MessageStatus.ACKNOWLEDGED);
     }
 
     /**
@@ -154,6 +258,7 @@ public class MessageService {
      * @param messageId the unique identifier of the rejected message
      */
     public void markRejected(String messageId) {
+        messagesWaitingACK.remove(messageId);
         persistenceService.updateMessageStatus(messageId, MessageStatus.FAILED);
     }
 
@@ -167,6 +272,20 @@ public class MessageService {
     public void syncConversationClock(String conversationId, long remoteMaxClock) {
         getConversationClock(conversationId)
                 .updateAndGet(current -> Math.max(current, remoteMaxClock));
+    }
+
+    /**
+     * Resets the set of messages that are waiting for server ACKs.
+     */
+    public void resetInFlight() {
+        messagesWaitingACK.clear();
+    }
+
+    /**
+     * Resets all conversation Lamport clocks.
+     */
+    public void resetClocks() {
+        lamportClocks.clear();
     }
 
     private AtomicLong getConversationClock(String conversationId) {

@@ -1,19 +1,21 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AuthResponseDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.LoginRequestDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.RegisterRequestDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.entity.jpa.User;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.persistence.repository.jpa.UserRepository;
-import it.unibo.hermes.gateway.infrastructure.security.JwtProvider;
+import it.unibo.hermes.gateway.application.model.AuthResult;
+import it.unibo.hermes.gateway.application.port.secondary.PasswordHasherPort;
+import it.unibo.hermes.gateway.application.port.secondary.TokenIssuerPort;
+import it.unibo.hermes.gateway.application.port.secondary.UserAccountPort;
+import it.unibo.hermes.gateway.domain.exception.InvalidCredentialsException;
+import it.unibo.hermes.gateway.domain.exception.InvalidUsernameException;
+import it.unibo.hermes.gateway.domain.exception.UsernameAlreadyTakenException;
+import it.unibo.hermes.gateway.domain.model.UserAccount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.Optional;
 
@@ -25,51 +27,65 @@ import static org.mockito.Mockito.*;
 class AuthServiceTest {
 
     @Mock
-    private UserRepository userRepository;
+    private UserAccountPort userAccounts;
     @Mock
-    private PasswordEncoder passwordEncoder;
+    private PasswordHasherPort passwordHasher;
     @Mock
-    private JwtProvider jwtProvider;
+    private TokenIssuerPort tokenIssuer;
 
     private AuthService authServiceImpl;
 
     @BeforeEach
     void setUp() {
-        authServiceImpl = new AuthService(userRepository, passwordEncoder, jwtProvider);
+        authServiceImpl = new AuthService(userAccounts, passwordHasher, tokenIssuer);
     }
 
     @Test
     void shouldRegisterNewUserWithHashedPassword() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode("secret123")).thenReturn("hashed-secret");
+        when(userAccounts.existsByUsername("alice")).thenReturn(false);
+        when(passwordHasher.encode("secret123")).thenReturn("hashed-secret");
 
-        authServiceImpl.register(new RegisterRequestDto("alice", "secret123"));
+        authServiceImpl.register("alice", "secret123");
 
-        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(captor.capture());
-        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
-        assertThat(captor.getValue().getPasswordHash()).isEqualTo("hashed-secret");
+        ArgumentCaptor<UserAccount> captor = ArgumentCaptor.forClass(UserAccount.class);
+        verify(userAccounts).save(captor.capture());
+        assertThat(captor.getValue().username()).isEqualTo("alice");
+        assertThat(captor.getValue().passwordHash()).isEqualTo("hashed-secret");
     }
 
     @Test
     void shouldRejectRegistrationOfDuplicateUsername() {
-        when(userRepository.existsByUsername("alice")).thenReturn(true);
+        when(userAccounts.existsByUsername("alice")).thenReturn(true);
 
-        assertThatThrownBy(() -> authServiceImpl.register(
-                new RegisterRequestDto("alice", "secret123")))
+        assertThatThrownBy(() -> authServiceImpl.register("alice", "secret123"))
+                .isInstanceOf(UsernameAlreadyTakenException.class)
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(userRepository, never()).save(any());
+        verify(userAccounts, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Alice", "al", "a-b", "alice bob", "alice!", "ALICE", " alice"})
+    void shouldRejectRegistrationOfNonCanonicalUsernames(String username) {
+        assertThatThrownBy(() -> authServiceImpl.register(username, "secret123"))
+                .isInstanceOf(InvalidUsernameException.class)
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(userAccounts);
+    }
+
+    @Test
+    void shouldRejectNullUsername() {
+        assertThatThrownBy(() -> authServiceImpl.register(null, "secret123"))
+                .isInstanceOf(InvalidUsernameException.class);
     }
 
     @Test
     void shouldLoginWithValidCredentials() {
-        User stored = new User("alice", "hashed-secret");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(stored));
-        when(passwordEncoder.matches("secret123", "hashed-secret")).thenReturn(true);
-        when(jwtProvider.generateToken("alice")).thenReturn("jwt-token");
-        when(jwtProvider.getExpirationMs()).thenReturn(10_000L);
+        when(userAccounts.findByUsername("alice")).thenReturn(Optional.of(new UserAccount("alice", "hashed-secret")));
+        when(passwordHasher.matches("secret123", "hashed-secret")).thenReturn(true);
+        when(tokenIssuer.generateToken("alice")).thenReturn("jwt-token");
+        when(tokenIssuer.getExpirationMs()).thenReturn(10_000L);
 
-        AuthResponseDto response = authServiceImpl.login(new LoginRequestDto("alice", "secret123"));
+        AuthResult response = authServiceImpl.login("alice", "secret123");
 
         assertThat(response.token()).isEqualTo("jwt-token");
         assertThat(response.username()).isEqualTo("alice");
@@ -78,21 +94,20 @@ class AuthServiceTest {
 
     @Test
     void shouldRejectLoginForUnknownUser() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(userAccounts.findByUsername("ghost")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authServiceImpl.login(new LoginRequestDto("ghost", "whatever")))
-                .isInstanceOf(BadCredentialsException.class);
-        verify(jwtProvider, never()).generateToken(any());
+        assertThatThrownBy(() -> authServiceImpl.login("ghost", "whatever"))
+                .isInstanceOf(InvalidCredentialsException.class);
+        verify(tokenIssuer, never()).generateToken(any());
     }
 
     @Test
     void shouldRejectLoginWithWrongPassword() {
-        User stored = new User("alice", "hashed-secret");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(stored));
-        when(passwordEncoder.matches("wrong-password", "hashed-secret")).thenReturn(false);
+        when(userAccounts.findByUsername("alice")).thenReturn(Optional.of(new UserAccount("alice", "hashed-secret")));
+        when(passwordHasher.matches("wrong-password", "hashed-secret")).thenReturn(false);
 
-        assertThatThrownBy(() -> authServiceImpl.login(new LoginRequestDto("alice", "wrong-password")))
-                .isInstanceOf(BadCredentialsException.class);
-        verify(jwtProvider, never()).generateToken(any());
+        assertThatThrownBy(() -> authServiceImpl.login("alice", "wrong-password"))
+                .isInstanceOf(InvalidCredentialsException.class);
+        verify(tokenIssuer, never()).generateToken(any());
     }
 }

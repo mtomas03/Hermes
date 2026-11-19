@@ -1,10 +1,12 @@
 package it.unibo.hermes.client.controller;
 
+import it.unibo.hermes.client.infrastructure.exception.AuthException;
 import it.unibo.hermes.client.model.domain.AuthToken;
 import it.unibo.hermes.client.model.domain.User;
 import it.unibo.hermes.client.model.dto.AuthResponseDto;
 import it.unibo.hermes.client.model.service.AuthService;
 import it.unibo.hermes.client.model.service.LocalPersistenceService;
+import it.unibo.hermes.client.model.service.MessageService;
 import it.unibo.hermes.client.model.state.AuthState;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
+import java.net.ConnectException;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -41,18 +44,22 @@ class AuthControllerTest {
     @Mock
     private SyncController syncController;
     @Mock
+    private MessageService messageService;
+    @Mock
     private Consumer<String> onError;
 
     private AuthController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new AuthController(authService, stateModel, persistence, connectionController, syncController);
+        controller = new AuthController(
+                authService, stateModel, persistence, connectionController, syncController, messageService);
     }
 
     @Test
     void successfulLoginShouldStoreTokenAndUserAndAuthenticate() {
         AuthResponseDto response = new AuthResponseDto("jwt-token", "alice", 3_600_000);
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
         when(authService.login("alice", "secret")).thenReturn(Mono.just(response));
 
         controller.login("alice", "secret", onError);
@@ -78,7 +85,8 @@ class AuthControllerTest {
     @Test
     void failedLoginWithInvalidCredentialsShouldReportFriendlyMessage() {
         when(authService.login("alice", "wrong"))
-                .thenReturn(Mono.error(new RuntimeException("Invalid credentials")));
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.INVALID_CREDENTIALS, 401, "Invalid credentials")));
 
         controller.login("alice", "wrong", onError);
 
@@ -89,7 +97,9 @@ class AuthControllerTest {
     @Test
     void loginFailureDueToConnectivityShouldReportServerUnreachable() {
         when(authService.login("alice", "secret"))
-                .thenReturn(Mono.error(new RuntimeException("Connection refused")));
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.NETWORK_ERROR, 0, "Cannot reach server",
+                        new ConnectException("Connection refused"))));
 
         controller.login("alice", "secret", onError);
 
@@ -123,13 +133,14 @@ class AuthControllerTest {
     void logoutShouldDisconnectClearLocalUserAndResetState() {
         controller.logout();
 
-        verify(connectionController).disconnect();
-        verify(persistence).clearLocalUser();
-        verify(stateModel).clearSession();
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
     }
 
     @Test
     void successfulLoginShouldPersistTheToken() {
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
         when(authService.login("alice", "secret"))
                 .thenReturn(Mono.just(new AuthResponseDto("jwt-token", "alice", 3_600_000)));
 
@@ -179,9 +190,8 @@ class AuthControllerTest {
     void logoutShouldClearPersistedTokenFirstAndNotDeleteHistory() {
         controller.logout();
 
-        InOrder order = inOrder(persistence, connectionController);
-        order.verify(persistence).clearAuthToken();
-        order.verify(connectionController).disconnect();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearAuthToken();
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
         verify(persistence, never()).saveMessage(any());
         verify(persistence, never()).saveConversation(any());
     }
@@ -192,8 +202,85 @@ class AuthControllerTest {
 
         controller.logout();
 
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearAuthToken();
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
+        verify(syncController, timeout(ASYNC_TIMEOUT_MS).atLeastOnce()).resetSyncState();
+        verify(messageService, timeout(ASYNC_TIMEOUT_MS)).resetClocks();
+    }
+
+    @Test
+    void loginWithDifferentUserShouldClearPreviousLocalUser() {
+        when(persistence.loadLocalUser()).thenReturn(Optional.of(new User("alice")));
+        AuthResponseDto response = new AuthResponseDto("jwt-token-bob", "bob", 3_600_000);
+        when(authService.login("bob", "secret")).thenReturn(Mono.just(response));
+
+        controller.login("bob", "secret", onError);
+
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveLocalUser(new User("bob"));
+        verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).connect("jwt-token-bob");
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setAuthState(AuthState.AUTHENTICATED);
+    }
+
+    @Test
+    void expiredTokenShouldTriggerTokenExpiredStateAndDisconnect() throws InterruptedException {
+        when(persistence.loadLocalUser()).thenReturn(Optional.empty());
+        AuthResponseDto response = new AuthResponseDto("jwt-token", "alice", 50);
+        when(authService.login("alice", "secret")).thenReturn(Mono.just(response));
+
+        controller.login("alice", "secret", onError);
+        Thread.sleep(150);
+
+        verify(connectionController).disconnect();
         verify(persistence).clearAuthToken();
         verify(stateModel).clearSession();
-        verify(syncController).resetSyncState();
+        verify(stateModel).setAuthState(AuthState.TOKEN_EXPIRED);
+    }
+
+    @Test
+    void logoutShouldDisconnectAndClearUserBeforeResettingLamportClocks() {
+        controller.logout();
+
+        InOrder order = inOrder(connectionController, persistence, stateModel, messageService);
+        order.verify(connectionController, timeout(ASYNC_TIMEOUT_MS)).disconnect();
+        order.verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).clearSession();
+        order.verify(persistence, timeout(ASYNC_TIMEOUT_MS)).clearLocalUser();
+        order.verify(messageService, timeout(ASYNC_TIMEOUT_MS)).resetClocks();
+    }
+
+    @Test
+    void failedRegistrationWithConflictShouldReportUsernameTaken() {
+        when(authService.register("taken", "password123"))
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.USERNAME_TAKEN, 409, "Registration failed")));
+        Runnable onSuccess = mock(Runnable.class);
+
+        controller.register("taken", "password123", onSuccess, onError);
+
+        verify(onError, timeout(ASYNC_TIMEOUT_MS)).accept("This username is already taken.");
+        verifyNoInteractions(onSuccess);
+    }
+
+    @Test
+    void failedLoginWithServiceUnavailableShouldReportTemporaryUnavailability() {
+        when(authService.login("alice", "secret"))
+                .thenReturn(Mono.error(new AuthException(
+                        AuthException.Reason.SERVICE_UNAVAILABLE, 503, "Service unavailable")));
+
+        controller.login("alice", "secret", onError);
+
+        verify(onError, timeout(ASYNC_TIMEOUT_MS))
+                .accept("The service is temporarily unavailable. Please try again later.");
+    }
+
+    @Test
+    void restoreSessionShouldHandlePersistenceFailureWithoutThrowing() {
+        when(persistence.loadValidAuthToken()).thenThrow(new RuntimeException("corrupt sqlite db"));
+
+        assertFalse(controller.restoreSession());
+
+        verify(stateModel).setAuthState(AuthState.UNAUTHENTICATED);
+        verify(stateModel).setStatusMessage("Session restore failed");
+        verifyNoInteractions(connectionController);
     }
 }

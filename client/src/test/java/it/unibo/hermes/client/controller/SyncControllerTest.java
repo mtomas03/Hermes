@@ -2,6 +2,7 @@ package it.unibo.hermes.client.controller;
 
 import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.dto.ConversationDto;
+import it.unibo.hermes.client.model.dto.InboundMessageDto;
 import it.unibo.hermes.client.model.dto.SyncResponseDto;
 import it.unibo.hermes.client.model.service.LocalPersistenceService;
 import it.unibo.hermes.client.model.service.SyncService;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.time.Instant;
 import java.util.List;
@@ -87,7 +89,7 @@ class SyncControllerTest {
 
         verify(syncService, timeout(ASYNC_TIMEOUT_MS)).applySync(syncResponse, "alice");
         verify(persistence, timeout(ASYNC_TIMEOUT_MS)).loadMessages("alice-bob");
-        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).replaceMessages(anyList());
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).mergeMessages(anyList());
     }
 
     @Test
@@ -123,13 +125,94 @@ class SyncControllerTest {
 
     @Test
     void refreshActiveMessagesShouldReloadFromLocalPersistence() {
+        when(stateModel.getSelectedConversation())
+                .thenReturn(new Conversation(
+                        "alice-bob", new User("bob")));
         Message msg = new Message(
-                "m1", "alice-bob", "alice", "bob",
+                "m1", "alice-bob",
+                "alice", "bob",
                 "hi", 1L, MessageStatus.SENT);
         when(persistence.loadMessages("alice-bob")).thenReturn(List.of(msg));
 
         controller.refreshActiveMessages("alice-bob");
 
-        verify(stateModel).replaceMessages(List.of(msg));
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).mergeMessages(List.of(msg));
+    }
+
+    @Test
+    void resetSyncStateShouldCancelInFlightConversationSyncAndIgnoreLateResponses() {
+        AuthToken validToken = new AuthToken("valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+
+        Sinks.One<SyncResponseDto> pendingSync = Sinks.one();
+        when(syncService.syncConversation(eq("alice-bob"), eq(validToken.bearerHeader())))
+                .thenReturn(pendingSync.asMono());
+
+        controller.syncConversationIfNeeded("alice-bob");
+        controller.resetSyncState();
+
+        InboundMessageDto staleMsg = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "stale", 1L, MessageStatus.STORED.name());
+        pendingSync.tryEmitValue(new SyncResponseDto("alice-bob", List.of(staleMsg)));
+
+        verify(syncService, never()).applySync(any(), any());
+        verify(persistence, never()).saveMessage(any());
+    }
+
+    @Test
+    void resetSyncStateDuringSyncAllShouldAbortPersistingFetchedConversations() {
+        AuthToken validToken = new AuthToken(
+                "valid-jwt", Instant.now().plusSeconds(3600));
+        when(stateModel.getAuthToken()).thenReturn(validToken);
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+
+        Sinks.One<List<ConversationDto>> pendingFetch = Sinks.one();
+        when(syncService.fetchConversations(validToken.bearerHeader()))
+                .thenReturn(pendingFetch.asMono());
+
+        controller.syncAll();
+        controller.resetSyncState();
+
+        pendingFetch.tryEmitValue(List.of(new ConversationDto(
+                "alice-bob", "alice", "bob")));
+
+        verify(persistence, never()).saveConversation(any());
+    }
+
+    @Test
+    void refreshActiveMessagesMergesLoadedMessagesWhenConversationIsStillSelected() {
+        Conversation conv = new Conversation("alice-bob", new User("bob"));
+        Message m1 = new Message(
+                "m1", "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
+        when(stateModel.getSelectedConversation()).thenReturn(conv);
+        when(persistence.loadMessages("alice-bob"))
+                .thenReturn(List.of(m1));
+
+        controller.refreshActiveMessages("alice-bob");
+
+        verify(stateModel, timeout(2000)).mergeMessages(List.of(m1));
+        verify(stateModel, never()).replaceMessages(any());
+    }
+
+    @Test
+    void refreshActiveMessagesDiscardsStaleLoadIfSelectedConversationChanged() {
+        Conversation convA = new Conversation("alice-bob", new User("bob"));
+        Conversation convB = new Conversation("alice-charlie", new User("charlie"));
+        when(stateModel.getSelectedConversation()).thenReturn(convA, convB);
+        when(persistence.loadMessages("alice-bob")).thenReturn(List.of(
+                new Message(
+                        "m1", "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.SENT)));
+
+        controller.refreshActiveMessages("alice-bob");
+
+        verify(stateModel, after(300).never()).mergeMessages(any());
+        verify(stateModel, never()).replaceMessages(any());
     }
 }

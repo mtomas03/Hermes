@@ -31,6 +31,9 @@ spring:
       retries: 3
       properties:
         enable.idempotence: true
+        delivery.timeout.ms: 5000
+        request.timeout.ms: 3000
+        max.block.ms: 3000
     consumer:
       group-id: hermes-worker
       auto-offset-reset: earliest
@@ -46,8 +49,9 @@ hermes:
     message-delivery: ${KAFKA_TOPIC_DELIVERY:message-delivery}
 
   delivery:
-    max-retry-attempts: 3
     retry-backoff-ms: 1000
+    retry-max-backoff-ms: 30000
+    stuck-alert-attempts: 10
 
   presence:
     key-prefix: "hermes:presence:"

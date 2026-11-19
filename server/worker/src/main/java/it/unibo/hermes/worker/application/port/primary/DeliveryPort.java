@@ -1,16 +1,21 @@
 package it.unibo.hermes.worker.application.port.primary;
 
-import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.domain.exception.MessageConflictException;
+import it.unibo.hermes.worker.domain.model.Message;
 
 /**
- * Port interface for orchestrating the message delivery pipeline.
+ * Primary port interface for taking charge of a message accepted by the Gateway,
+ * persist it and route it to its recipient.
  */
 public interface DeliveryPort {
 
     /**
-     * Processes a message event by orchestrating the delivery pipeline.
+     * Persists the message and decides how it reaches the recipient.
      *
-     * @param event the message event to be processed
+     * @param message the message to process
+     * @throws MessageConflictException        if the identifier is already used by a different message
+     * @throws PersistenceUnavailableException if the message could not be persisted or its status updated
      */
-    void processMessage(MessageEvent event);
+    void processMessage(Message message);
 }

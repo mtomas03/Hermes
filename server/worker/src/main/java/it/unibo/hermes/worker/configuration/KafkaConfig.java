@@ -11,7 +11,8 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.FixedBackOff;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import org.springframework.util.backoff.ExponentialBackOff;
 
 @Configuration
 @EnableKafka
@@ -19,11 +20,12 @@ public class KafkaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConfig.class);
 
-    @Value("${hermes.delivery.max-retry-attempts:3}")
-    private long maxRetryAttempts;
-
     @Value("${hermes.delivery.retry-backoff-ms:1000}")
     private long retryBackoffMs;
+    @Value("${hermes.delivery.retry-max-backoff-ms:30000}")
+    private long retryMaxBackoffMs;
+    @Value("${hermes.delivery.stuck-alert-attempts:10}")
+    private int stuckAlertAttempts;
 
     /**
      * KafkaTemplate for Worker producers.
@@ -38,25 +40,49 @@ public class KafkaConfig {
      */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
-            ConsumerFactory<String, String> consumerFactory) {
+            ConsumerFactory<String, String> consumerFactory,
+            DefaultErrorHandler deliveryErrorHandler) {
 
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
-        factory.setCommonErrorHandler(deliveryErrorHandler());
+        factory.setCommonErrorHandler(deliveryErrorHandler);
         return factory;
     }
 
     /**
-     * Error handler for Worker listener execution failures.
+     * Error handler for Worker consumers, with retry and backoff for persistence failures.
      */
     @Bean
     public DefaultErrorHandler deliveryErrorHandler() {
-        FixedBackOff backOff = new FixedBackOff(retryBackoffMs, maxRetryAttempts);
-        return new DefaultErrorHandler(
+        DefaultErrorHandler handler = new DefaultErrorHandler(
                 (record, exception) -> log.error(
-                        "Worker consumer failed after {} retries - topic={} partition={} offset={}: {}",
-                        maxRetryAttempts, record.topic(), record.partition(), record.offset(), exception.getMessage()),
-                backOff);
+                        "Poison record skipped - topic={} partition={} offset={}: {}",
+                        record.topic(), record.partition(), record.offset(), exception.getMessage()),
+                unlimitedCappedBackOff(retryBackoffMs, retryMaxBackoffMs));
+        handler.defaultFalse(true);
+        handler.addRetryableExceptions(PersistenceUnavailableException.class);
+        handler.setRetryListeners((record, exception, deliveryAttempt) -> {
+            if (ConsumerFailurePolicy.isStuckAlert(deliveryAttempt, stuckAlertAttempts)) {
+                log.error("Consumer still failing after {} attempts, " +
+                                "the partition is blocked until the message store database recovers " +
+                                "- topic={} partition={} offset={}: {}",
+                        deliveryAttempt, record.topic(), record.partition(), record.offset(),
+                        exception.getMessage());
+            } else {
+                log.warn("Record processing failed (attempt {}), will retry " +
+                                "- topic={} partition={} offset={}: {}",
+                        deliveryAttempt, record.topic(), record.partition(), record.offset(),
+                        exception.getMessage());
+            }
+        });
+        return handler;
+    }
+
+    private ExponentialBackOff unlimitedCappedBackOff(long initialIntervalMs, long maxIntervalMs) {
+        ExponentialBackOff backOff = new ExponentialBackOff(initialIntervalMs, 2.0);
+        backOff.setMaxInterval(maxIntervalMs);
+        backOff.setMaxElapsedTime(Long.MAX_VALUE);
+        return backOff;
     }
 }

@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.presence.RedisPresenceAdapter;
+import it.unibo.hermes.gateway.application.port.secondary.PresencePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,7 +15,7 @@ import static org.mockito.Mockito.when;
 class PresenceServiceTest {
 
     @Mock
-    private RedisPresenceAdapter presenceAdapter;
+    private PresencePort presenceAdapter;
 
     private PresenceService service;
 

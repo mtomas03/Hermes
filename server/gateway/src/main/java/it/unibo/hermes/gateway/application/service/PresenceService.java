@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.presence.RedisPresenceAdapter;
+import it.unibo.hermes.gateway.application.port.secondary.PresencePort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,14 +13,14 @@ public class PresenceService {
 
     private static final Logger log = LoggerFactory.getLogger(PresenceService.class);
 
-    private final RedisPresenceAdapter presenceAdapter;
+    private final PresencePort presenceAdapter;
 
     /**
      * Creates the presence service.
      *
      * @param presenceAdapter the adapter executing presence operations in Redis
      */
-    public PresenceService(RedisPresenceAdapter presenceAdapter) {
+    public PresenceService(PresencePort presenceAdapter) {
         this.presenceAdapter = presenceAdapter;
     }
 

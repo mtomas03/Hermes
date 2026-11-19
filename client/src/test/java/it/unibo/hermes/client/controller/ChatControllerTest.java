@@ -26,6 +26,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ChatControllerTest {
 
+    private static final long ASYNC_TIMEOUT_MS = 2000;
+
     @Mock
     private ClientStateModel stateModel;
     @Mock
@@ -106,13 +108,15 @@ class ChatControllerTest {
                 "hello", 1L, MessageStatus.SENT);
         when(stateModel.getSelectedConversation()).thenReturn(conv);
         when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
-        when(messageService.send("alice", "alice-bob", "bob", "hello")).thenReturn(sent);
+        when(messageService
+                .send("alice", "alice-bob", "bob", "hello"))
+                .thenReturn(sent);
 
         controller.sendMessage("  hello  ", onError);
 
-        // Content is trimmed before being handed to the service
-        verify(messageService).send("alice", "alice-bob", "bob", "hello");
-        verify(stateModel).appendMessage(sent);
+        verify(messageService, timeout(ASYNC_TIMEOUT_MS))
+                .send("alice", "alice-bob", "bob", "hello");
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).appendMessage(sent);
         verifyNoInteractions(onError);
     }
 
@@ -151,9 +155,9 @@ class ChatControllerTest {
 
         controller.startConversationWith("bob", onError);
 
-        verify(persistence, timeout(2000)).saveConversation(any(Conversation.class));
-        verify(stateModel, timeout(2000)).setSelectedConversation(any(Conversation.class));
-        verify(syncController, timeout(2000)).syncConversationIfNeeded(anyString());
+        verify(persistence, timeout(ASYNC_TIMEOUT_MS)).saveConversation(any(Conversation.class));
+        verify(stateModel, timeout(ASYNC_TIMEOUT_MS)).setSelectedConversation(any(Conversation.class));
+        verify(syncController, timeout(ASYNC_TIMEOUT_MS)).syncConversationIfNeeded(anyString());
         verifyNoInteractions(onError);
     }
 }

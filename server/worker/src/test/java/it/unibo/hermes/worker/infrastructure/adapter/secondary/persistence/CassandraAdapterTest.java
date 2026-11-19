@@ -1,11 +1,13 @@
 package it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence;
 
-import it.unibo.hermes.worker.domain.DeliveryStatus;
+import it.unibo.hermes.worker.application.exception.PersistenceUnavailableException;
+import it.unibo.hermes.worker.application.exception.PersistenceInconsistencyException;
+import it.unibo.hermes.worker.domain.model.DeliveryStatus;
+import it.unibo.hermes.worker.domain.model.Message;
+import it.unibo.hermes.worker.domain.model.StoredMessage;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.entity.MessageById;
-import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.exception.PersistenceUnavailableException;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.repository.ConversationByUserRepository;
 import it.unibo.hermes.worker.infrastructure.adapter.secondary.persistence.repository.MessageByIdRepository;
-import it.unibo.hermes.worker.infrastructure.event.MessageEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,69 +64,70 @@ class CassandraAdapterTest {
                 cassandraOperations);
     }
 
-    private MessageEvent createSampleEvent() {
-        return new MessageEvent(
-                UUID.randomUUID().toString(),
-                "alice-bob",
-                "alice", "bob", "hi",
-                1L);
+    private Message createMessage() {
+        return new Message(
+                UUID.randomUUID().toString(), "alice-bob",
+                "alice", "bob",
+                "hi", 1L);
     }
 
     @Test
     void newMessageIsInitialisedWithAConditionalInsertAndNeverWithAPlainSave() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.PENDING)));
         givenCqlApplied(BY_ID_INSERT, true);
         givenCqlApplied(BY_CONV_INSERT, true);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         verify(cqlOperations).execute(
                 argThat((String cql) -> cql.startsWith(BY_ID_INSERT) && cql.contains("IF NOT EXISTS")
                         && cql.contains("'PENDING'")),
-                eq(messageId), eq(event.conversationId()), eq("alice"), eq("bob"), eq("hi"), eq(1L));
+                eq(messageId), eq(message.conversationId()), eq("alice"),
+                eq("bob"), eq("hi"), eq(1L));
         verify(messageByIdRepository, never()).save(any());
     }
 
     @Test
     void projectionRowIsCreatedConditionallyFromTheAuthoritativeDataAndBothParticipantsAreIndexed() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.PENDING)));
         givenCqlApplied(BY_ID_INSERT, true);
         givenCqlApplied(BY_CONV_INSERT, true);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         verify(cqlOperations).execute(
                 argThat((String cql) -> cql.startsWith(BY_CONV_INSERT) && cql.contains("IF NOT EXISTS")
                         && cql.contains("PENDING")),
-                eq(event.conversationId()), eq(1L), eq(messageId), eq("alice"), eq("bob"), eq("hi"));
+                eq(message.conversationId()), eq(1L), eq(messageId),
+                eq("alice"), eq("bob"), eq("hi"));
         verify(conversationByUserRepository).save(argThat(index ->
                 index.getUsername().equals("alice")
-                        && index.getConversationId().equals(event.conversationId())
+                        && index.getConversationId().equals(message.conversationId())
                         && index.getOtherParticipant().equals("bob")));
         verify(conversationByUserRepository).save(argThat(index ->
                 index.getUsername().equals("bob")
-                        && index.getConversationId().equals(event.conversationId())
+                        && index.getConversationId().equals(message.conversationId())
                         && index.getOtherParticipant().equals("alice")));
     }
 
     @Test
     void authoritativeRowIsInitialisedBeforeTheProjectionAndTheIndexes() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.PENDING)));
         givenCqlApplied(BY_ID_INSERT, true);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         InOrder order = inOrder(cqlOperations, conversationByUserRepository);
         order.verify(cqlOperations).execute(startsWith(BY_ID_INSERT), any(Object[].class));
@@ -134,8 +137,8 @@ class CassandraAdapterTest {
 
     @Test
     void rejectedInsertBecauseAWorkerWonTheRaceKeepsTheAdvancedStatusAndIsNotAnError() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.DELIVERED)));
@@ -143,19 +146,21 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV_INSERT, false);
         givenCqlApplied(BY_CONV, true);
 
-        assertThatCode(() -> cassandraAdapter.persistMessage(event)).doesNotThrowAnyException();
+        assertThatCode(() -> persist(message)).doesNotThrowAnyException();
 
         verify(messageByIdRepository, never()).save(any());
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
         // the projection is aligned upwards to DELIVERED, never reset to PENDING
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERED"), eq("alice-bob"), eq(1L),
-                eq(messageId), eq("PENDING"), eq("STORED"), eq("DELIVERING"));
+        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERED"),
+                eq("alice-bob"), eq(1L),
+                eq(messageId), eq("PENDING"),
+                eq("STORED"), eq("DELIVERING"));
     }
 
     @Test
     void rejectedInsertOnAnAcknowledgedMessageNeverRegressesItToPending() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.ACKNOWLEDGED)));
@@ -163,23 +168,27 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV_INSERT, false);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         // the only statements on message_by_id are the rejected conditional insert and plain reads
-        verify(cqlOperations, times(1)).execute(startsWith(BY_ID_INSERT), any(Object[].class));
-        verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"), any(), any(), any(),
-                eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
-        verify(cqlOperations, times(1)).execute(startsWith(BY_CONV), any(Object[].class));
+        verify(cqlOperations, times(1))
+                .execute(startsWith(BY_ID_INSERT), any(Object[].class));
+        verify(cqlOperations, never())
+                .execute(startsWith(BY_ID), any(Object[].class));
+        verify(cqlOperations)
+                .execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"), any(), any(), any(),
+                        eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
+        verify(cqlOperations, times(1))
+                .execute(startsWith(BY_CONV), any(Object[].class));
     }
 
     @Test
     void existingMessageSkipsTheInsertButStillCompletesProjectionAndIndexes() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         givenStored(messageId, DeliveryStatus.PENDING);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         verify(cqlOperations, never()).execute(startsWith(BY_ID_INSERT), any(Object[].class));
         verify(cqlOperations).execute(startsWith(BY_CONV_INSERT), any(Object[].class));
@@ -189,14 +198,14 @@ class CassandraAdapterTest {
 
     @Test
     void duplicateEventOnAnAcknowledgedMessageLeavesTheAuthoritativeStatusUntouched() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         givenStored(messageId, DeliveryStatus.ACKNOWLEDGED);
         givenCqlApplied(BY_CONV_INSERT, false);
         givenCqlApplied(BY_CONV, false);
         givenProjectionRows(List.of(Map.of("delivery_status", "ACKNOWLEDGED")));
 
-        assertThatCode(() -> cassandraAdapter.persistMessage(event)).doesNotThrowAnyException();
+        assertThatCode(() -> persist(message)).doesNotThrowAnyException();
 
         verify(messageByIdRepository, never()).save(any());
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
@@ -205,14 +214,14 @@ class CassandraAdapterTest {
 
     @Test
     void existingProjectionAlreadyAcknowledgedIsNotResetToPending() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         givenStored(messageId, DeliveryStatus.ACKNOWLEDGED);
         givenCqlApplied(BY_CONV_INSERT, false);
         givenCqlApplied(BY_CONV, false);
         givenProjectionRows(List.of(Map.of("delivery_status", "ACKNOWLEDGED")));
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"), any(), any(), any(),
                 eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
@@ -221,8 +230,8 @@ class CassandraAdapterTest {
 
     @Test
     void projectionCreatedAsPendingWhileTheAuthoritativeStatusAdvancedIsAlignedToIt() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.ACKNOWLEDGED)));
@@ -230,7 +239,7 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV_INSERT, true);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
         InOrder order = inOrder(cqlOperations);
         order.verify(cqlOperations).execute(startsWith(BY_CONV_INSERT), any(Object[].class));
@@ -239,49 +248,62 @@ class CassandraAdapterTest {
     }
 
     @Test
-    void immutableFieldMismatchOnAnExistingMessageIsReportedAndNothingIsOverwritten() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+    void existingMessageWithDifferentDataIsReturnedAsStoredAndNothingIsOverwritten() {
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId)).thenReturn(Optional.of(new MessageById(
-                messageId, event.conversationId(),
+                messageId, message.conversationId(),
                 "alice", "bob",
                 "a different content", 1L,
                 DeliveryStatus.DELIVERED.name())));
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class)
-                .rootCause().hasMessageContaining("content");
+        StoredMessage stored = cassandraAdapter.createIfAbsent(message);
 
+        // the authoritative row is never overwritten, even if the content differs
+        assertThat(stored.message().content()).isEqualTo("a different content");
+        assertThat(stored.status()).isEqualTo(DeliveryStatus.DELIVERED);
         verifyNoInteractions(cqlOperations, conversationByUserRepository);
         verify(messageByIdRepository, never()).save(any());
     }
 
     @Test
-    void immutableFieldMismatchDiscoveredAfterARejectedInsertIsReported() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+    void rejectedInsertReturnsTheRecordOfTheWinnerEvenIfItsDataDiffers() {
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(new MessageById(messageId, event.conversationId(),
-                        "charlie", "bob", "hi", 1L, DeliveryStatus.STORED.name())));
+                .thenReturn(Optional.of(new MessageById(messageId, message.conversationId(),
+                        "charlie", "bob",
+                        "hi", 1L, DeliveryStatus.STORED.name())));
         givenCqlApplied(BY_ID_INSERT, false);
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .rootCause().hasMessageContaining("senderUsername");
+        StoredMessage stored = cassandraAdapter.createIfAbsent(message);
 
+        assertThat(stored.message().senderUsername()).isEqualTo("charlie");
+        assertThat(stored.status()).isEqualTo(DeliveryStatus.STORED);
         verify(cqlOperations, never()).execute(startsWith(BY_CONV_INSERT), any(Object[].class));
         verifyNoInteractions(conversationByUserRepository);
     }
 
     @Test
+    void newMessageIsReturnedAsPendingWithTheReceivedData() {
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
+        when(messageByIdRepository.findById(messageId)).thenReturn(Optional.empty());
+        givenCqlApplied(BY_ID_INSERT, true);
+
+        StoredMessage stored = cassandraAdapter.createIfAbsent(message);
+
+        assertThat(stored).isEqualTo(new StoredMessage(message, DeliveryStatus.PENDING));
+    }
+
+    @Test
     void rejectedInsertWithAnUnreadableRowIsAnErrorToRetryAndNotASilentDuplicate() {
-        MessageEvent event = createSampleEvent();
+        Message message = createMessage();
         when(messageByIdRepository.findById(any())).thenReturn(Optional.empty());
         givenCqlApplied(BY_ID_INSERT, false);
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
+        assertThatThrownBy(() -> persist(message))
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasRootCauseInstanceOf(IllegalStateException.class);
         verifyNoInteractions(conversationByUserRepository);
@@ -289,22 +311,22 @@ class CassandraAdapterTest {
 
     @Test
     void cassandraFailureOnTheConditionalInsertIsDistinctFromARejectionAndIsPropagated() {
-        MessageEvent event = createSampleEvent();
+        Message message = createMessage();
         when(messageByIdRepository.findById(any())).thenReturn(Optional.empty());
         when(cqlOperations.execute(startsWith(BY_ID_INSERT), any(Object[].class)))
                 .thenThrow(new RuntimeException("Cassandra write timeout"));
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
+        assertThatThrownBy(() -> persist(message))
                 .isInstanceOf(PersistenceUnavailableException.class)
-                .hasMessageContaining("Cannot persist message " + event.messageId())
+                .hasMessageContaining("Cannot persist message " + message.messageId())
                 .hasRootCauseMessage("Cassandra write timeout");
         verifyNoInteractions(conversationByUserRepository);
     }
 
     @Test
     void redeliveryAfterAFailureFollowingTheAuthoritativeInsertCompletesTheMissingRows() {
-        MessageEvent event = createSampleEvent();
-        UUID messageId = UUID.fromString(event.messageId());
+        Message message = createMessage();
+        UUID messageId = UUID.fromString(message.messageId());
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.PENDING)));
@@ -314,28 +336,30 @@ class CassandraAdapterTest {
                 .thenThrow(new RuntimeException("Cassandra write failed"))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
+        assertThatThrownBy(() -> persist(message))
                 .isInstanceOf(PersistenceUnavailableException.class);
 
         when(messageByIdRepository.findById(messageId))
                 .thenReturn(Optional.of(messageWithStatus(messageId, DeliveryStatus.PENDING)));
-        cassandraAdapter.persistMessage(event);
+        persist(message);
 
-        verify(cqlOperations, times(1)).execute(startsWith(BY_ID_INSERT), any(Object[].class));
-        verify(cqlOperations, times(2)).execute(startsWith(BY_CONV_INSERT), any(Object[].class));
+        verify(cqlOperations, times(1))
+                .execute(startsWith(BY_ID_INSERT), any(Object[].class));
+        verify(cqlOperations, times(2))
+                .execute(startsWith(BY_CONV_INSERT), any(Object[].class));
         verify(conversationByUserRepository, times(3)).save(any());
         verify(messageByIdRepository, never()).save(any());
     }
 
     @Test
     void shouldWrapRepositoryFailureAsPersistenceUnavailable() {
-        MessageEvent event = createSampleEvent();
+        Message message = createMessage();
         when(messageByIdRepository.findById(any()))
                 .thenThrow(new RuntimeException("Cassandra connection error"));
 
-        assertThatThrownBy(() -> cassandraAdapter.persistMessage(event))
+        assertThatThrownBy(() -> persist(message))
                 .isInstanceOf(PersistenceUnavailableException.class)
-                .hasMessageContaining("Cannot persist message " + event.messageId());
+                .hasMessageContaining("Cannot persist message " + message.messageId());
     }
 
     @Test
@@ -343,7 +367,7 @@ class CassandraAdapterTest {
         UUID id = UUID.randomUUID();
         when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.STORED);
 
         verifyNoInteractions(cqlOperations);
     }
@@ -355,13 +379,14 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_ID, true);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING);
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING);
 
         InOrder order = inOrder(cqlOperations);
         order.verify(cqlOperations).execute(startsWith(BY_ID),
                 eq("DELIVERING"), eq(id), eq("PENDING"), eq("STORED"));
         order.verify(cqlOperations).execute(startsWith(BY_CONV),
-                eq("DELIVERING"), eq("alice-bob"), eq(1L), eq(id), eq("PENDING"), eq("STORED"));
+                eq("DELIVERING"), eq("alice-bob"), eq(1L),
+                eq(id), eq("PENDING"), eq("STORED"));
     }
 
     @Test
@@ -371,10 +396,12 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_ID, true);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED);
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED);
 
-        verify(cqlOperations).execute(startsWith(BY_ID), eq("ACKNOWLEDGED"), eq(id),
-                eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
+        verify(cqlOperations).execute(startsWith(BY_ID),
+                eq("ACKNOWLEDGED"), eq(id),
+                eq("PENDING"), eq("STORED"),
+                eq("DELIVERING"), eq("DELIVERED"));
     }
 
     @Test
@@ -388,14 +415,17 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV, false); // the projection already shows ACKNOWLEDGED
         givenProjectionRows(List.of(Map.of("delivery_status", "ACKNOWLEDGED")));
 
-        assertThatCode(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING))
+        assertThatCode(() -> cassandraAdapter
+                .advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
                 .doesNotThrowAnyException();
 
         // the projection is aligned to what is really stored, never to the stale requested status
         verify(cqlOperations, never()).execute(startsWith(BY_CONV), eq("DELIVERING"),
                 any(), any(), any(), any(), any());
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"), eq("alice-bob"), eq(1L), eq(id),
-                eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
+        verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"),
+                eq("alice-bob"), eq(1L), eq(id),
+                eq("PENDING"), eq("STORED"),
+                eq("DELIVERING"), eq("DELIVERED"));
     }
 
     @Test
@@ -404,11 +434,13 @@ class CassandraAdapterTest {
         givenStored(id, DeliveryStatus.ACKNOWLEDGED);
         givenCqlApplied(BY_CONV, true); // projection was left behind by an earlier partial update
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED);
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED);
 
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"), eq("alice-bob"), eq(1L), eq(id),
-                eq("PENDING"), eq("STORED"), eq("DELIVERING"), eq("DELIVERED"));
+        verify(cqlOperations).execute(startsWith(BY_CONV), eq("ACKNOWLEDGED"),
+                eq("alice-bob"), eq(1L), eq(id),
+                eq("PENDING"), eq("STORED"),
+                eq("DELIVERING"), eq("DELIVERED"));
     }
 
     @Test
@@ -417,11 +449,13 @@ class CassandraAdapterTest {
         givenStored(id, DeliveryStatus.DELIVERED);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED);
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.STORED);
 
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERED"), eq("alice-bob"), eq(1L), eq(id),
-                eq("PENDING"), eq("STORED"), eq("DELIVERING"));
+        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERED"),
+                eq("alice-bob"), eq(1L), eq(id),
+                eq("PENDING"), eq("STORED"),
+                eq("DELIVERING"));
     }
 
     @Test
@@ -432,7 +466,8 @@ class CassandraAdapterTest {
         when(cqlOperations.execute(startsWith(BY_CONV), any(Object[].class)))
                 .thenThrow(new RuntimeException("write timeout"));
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING))
+        assertThatThrownBy(() -> cassandraAdapter
+                .advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasMessageContaining("Cannot update status for message " + id);
         verify(cqlOperations).execute(startsWith(BY_ID), any(Object[].class));
@@ -449,14 +484,16 @@ class CassandraAdapterTest {
                 .thenThrow(new RuntimeException("write timeout"))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING))
+        assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
                 .isInstanceOf(PersistenceUnavailableException.class);
 
-        cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING); // the retry
+        cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING); // the retry
 
-        verify(cqlOperations, times(1)).execute(startsWith(BY_ID), any(Object[].class)); // not applied twice
-        verify(cqlOperations, times(2)).execute(startsWith(BY_CONV), eq("DELIVERING"), any(), any(), any(),
-                any(), any());
+        verify(cqlOperations, times(1))
+                .execute(startsWith(BY_ID), any(Object[].class)); // not applied twice
+        verify(cqlOperations, times(2))
+                .execute(startsWith(BY_CONV), eq("DELIVERING"),
+                        any(), any(), any(), any(), any());
     }
 
     @Test
@@ -466,9 +503,8 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV, false);
         givenProjectionRows(List.of());
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
+                .isInstanceOf(PersistenceInconsistencyException.class);
     }
 
     @Test
@@ -478,9 +514,8 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV, false);
         givenProjectionRows(List.of(Map.of("delivery_status", "PENDING")));
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.DELIVERING))
-                .isInstanceOf(PersistenceUnavailableException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.DELIVERING))
+                .isInstanceOf(PersistenceInconsistencyException.class);
     }
 
     @Test
@@ -491,8 +526,8 @@ class CassandraAdapterTest {
                         "alice", "bob",
                         "hi", 1L, "SOMETHING_ELSE")));
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED))
-                .isInstanceOf(PersistenceUnavailableException.class);
+        assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.ACKNOWLEDGED))
+                .isInstanceOf(PersistenceInconsistencyException.class);
         verifyNoInteractions(cqlOperations);
     }
 
@@ -503,7 +538,7 @@ class CassandraAdapterTest {
         when(cqlOperations.execute(startsWith(BY_ID), any(Object[].class)))
                 .thenThrow(new RuntimeException("Cassandra update timeout"));
 
-        assertThatThrownBy(() -> cassandraAdapter.updateMessageDeliveryStatus(id.toString(), DeliveryStatus.STORED))
+        assertThatThrownBy(() -> cassandraAdapter.advanceStatus(id.toString(), DeliveryStatus.STORED))
                 .isInstanceOf(PersistenceUnavailableException.class)
                 .hasMessageContaining("Cannot update status for message " + id);
     }
@@ -515,10 +550,11 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV_INSERT, false);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.reconcileConversationProjection(id.toString());
+        cassandraAdapter.reconcileProjection(id.toString());
 
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
-        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERING"), eq("alice-bob"), eq(1L), eq(id),
+        verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERING"),
+                eq("alice-bob"), eq(1L), eq(id),
                 eq("PENDING"), eq("STORED"));
     }
 
@@ -529,12 +565,14 @@ class CassandraAdapterTest {
         givenCqlApplied(BY_CONV_INSERT, true);
         givenCqlApplied(BY_CONV, true);
 
-        cassandraAdapter.reconcileConversationProjection(id.toString());
+        cassandraAdapter.reconcileProjection(id.toString());
 
         InOrder order = inOrder(cqlOperations);
         order.verify(cqlOperations).execute(startsWith(BY_CONV_INSERT),
-                eq("alice-bob"), eq(1L), eq(id), eq("alice"), eq("bob"), eq("hi"));
-        order.verify(cqlOperations).execute(startsWith(BY_CONV), eq("DELIVERED"), any(), any(), any(),
+                eq("alice-bob"), eq(1L), eq(id),
+                eq("alice"), eq("bob"), eq("hi"));
+        order.verify(cqlOperations).execute(startsWith(BY_CONV),
+                eq("DELIVERED"), any(), any(), any(),
                 any(), any(), any());
         verify(conversationByUserRepository, times(2)).save(any());
         verify(cqlOperations, never()).execute(startsWith(BY_ID), any(Object[].class));
@@ -545,38 +583,98 @@ class CassandraAdapterTest {
         UUID id = UUID.randomUUID();
         when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
 
-        cassandraAdapter.reconcileConversationProjection(id.toString());
+        cassandraAdapter.reconcileProjection(id.toString());
 
         verifyNoInteractions(cqlOperations);
     }
 
     @Test
-    void isAlreadyProcessedShouldBeFalseForUnknownMessage() {
+    void findByIdIsEmptyForUnknownMessage() {
         UUID id = UUID.randomUUID();
         when(messageByIdRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isFalse();
+        assertThat(cassandraAdapter.findById(id.toString())).isEmpty();
     }
 
     @Test
-    void isAlreadyProcessedShouldBeFalseWhenStillPending() {
+    void findByIdMapsTheStoredRecordToTheDomainWithItsPendingStatus() {
         UUID id = UUID.randomUUID();
-        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(new MessageById(
-                id, "alice-bob", "alice", "bob", "hi",
-                1L, DeliveryStatus.PENDING.name())));
+        givenStored(id, DeliveryStatus.PENDING);
 
-        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isFalse();
+        Optional<StoredMessage> found = cassandraAdapter.findById(id.toString());
+
+        assertThat(found).contains(new StoredMessage(
+                new Message(id.toString(), "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L), DeliveryStatus.PENDING));
+        assertThat(found.orElseThrow().isProcessed()).isFalse();
     }
 
     @Test
-    void isAlreadyProcessedShouldBeTrueWhenPastPending() {
+    void findByIdReportsAMessagePastPendingAsProcessed() {
         UUID id = UUID.randomUUID();
-        MessageById entity = new MessageById(
-                id, "alice-bob", "alice", "bob", "hi",
-                1L, DeliveryStatus.STORED.name());
-        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(entity));
+        givenStored(id, DeliveryStatus.STORED);
 
-        assertThat(cassandraAdapter.isAlreadyProcessed(id.toString())).isTrue();
+        assertThat(cassandraAdapter.findById(id.toString()).orElseThrow().isProcessed()).isTrue();
+    }
+
+    @Test
+    void findByIdWrapsRepositoryFailuresAsPersistenceUnavailable() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id))
+                .thenThrow(new RuntimeException("Cassandra connection error"));
+
+        assertThatThrownBy(() -> cassandraAdapter.findById(id.toString()))
+                .isInstanceOf(PersistenceUnavailableException.class)
+                .hasMessageContaining("Cannot read message " + id);
+    }
+
+    @Test
+    void findByIdWithAnUnrecognisedStoredStatusIsAnErrorAndNotAGuess() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(
+                new MessageById(id, "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L, "SOMETHING_ELSE")));
+
+        assertThatThrownBy(() -> cassandraAdapter.findById(id.toString()))
+                .isInstanceOf(PersistenceInconsistencyException.class);
+    }
+
+    @Test
+    void storedRowThatViolatesTheMessageInvariantsIsAnInconsistencyAndNotARetryableOutage() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id)).thenReturn(Optional.of(
+                new MessageById(id, "alice-bob",
+                        "alice", "bob",
+                        null, 1L, DeliveryStatus.PENDING.name())));
+
+        assertThatThrownBy(() -> cassandraAdapter.findById(id.toString()))
+                .isInstanceOf(PersistenceInconsistencyException.class)
+                .hasMessageContaining(id.toString());
+    }
+
+    private void persist(Message message) {
+        cassandraAdapter.createIfAbsent(message);
+        cassandraAdapter.reconcileProjection(message.messageId());
+    }
+
+    @Test
+    void findByIdExposesTheStoredRecipient() {
+        UUID id = UUID.randomUUID();
+        when(messageByIdRepository.findById(id))
+                .thenReturn(Optional.of(messageWithStatus(id, DeliveryStatus.STORED)));
+
+        assertThat(cassandraAdapter.findById(id.toString()).orElseThrow().message().recipientUsername())
+                .isEqualTo("bob");
+    }
+
+    @Test
+    void findByIdTreatsAMalformedIdentifierAsUnknownWithoutTouchingCassandra() {
+        assertThat(cassandraAdapter.findById("not-a-messageId")).isEmpty();
+        assertThat(cassandraAdapter.findById(null)).isEmpty();
+
+        verifyNoInteractions(messageByIdRepository);
     }
 
     private void givenStored(UUID id, DeliveryStatus status) {

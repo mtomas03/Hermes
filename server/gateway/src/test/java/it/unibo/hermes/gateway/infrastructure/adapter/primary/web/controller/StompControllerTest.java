@@ -1,14 +1,17 @@
 package it.unibo.hermes.gateway.infrastructure.adapter.primary.web.controller;
 
-import it.unibo.hermes.gateway.application.service.InboundMessageService;
+import it.unibo.hermes.gateway.application.model.SendMessageCommand;
+import it.unibo.hermes.gateway.application.port.primary.AcknowledgementPort;
+import it.unibo.hermes.gateway.application.port.primary.InboundMessagePort;
+import it.unibo.hermes.gateway.domain.exception.BackboneUnavailableException;
+import it.unibo.hermes.gateway.domain.exception.InvalidMessageException;
 import it.unibo.hermes.gateway.domain.exception.PersistenceUnavailableException;
+import it.unibo.hermes.gateway.domain.model.Message;
+import it.unibo.hermes.gateway.domain.model.MessageStatus;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.AckDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.DeliveryAckDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.ErrorDto;
 import it.unibo.hermes.gateway.infrastructure.adapter.primary.web.dto.MessageToGatewayDto;
-import it.unibo.hermes.gateway.infrastructure.adapter.secondary.producer.MessageAckProducer;
-import it.unibo.hermes.gateway.infrastructure.event.MessageAckEvent;
-import it.unibo.hermes.gateway.infrastructure.event.MessageEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,34 +33,44 @@ class StompControllerTest {
 
     private static final Principal ALICE = () -> "alice";
     @Mock
-    private InboundMessageService publisherService;
+    private InboundMessagePort inboundMessagePort;
     @Mock
-    private MessageAckProducer messageAckProducer;
+    private AcknowledgementPort acknowledgementPort;
     @Mock
     private SimpMessagingTemplate messagingTemplate;
     private StompController stompController;
 
     @BeforeEach
     void setUp() {
-        stompController = new StompController(publisherService, messageAckProducer, messagingTemplate);
+        stompController = new StompController(inboundMessagePort, acknowledgementPort, messagingTemplate);
+    }
+
+    private MessageToGatewayDto payload(String messageId) {
+        return new MessageToGatewayDto(messageId, "alice-bob",
+                "alice", "bob",
+                "hi", 1L);
+    }
+
+    private ErrorDto captureError() {
+        ArgumentCaptor<ErrorDto> captor = ArgumentCaptor.forClass(ErrorDto.class);
+        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), captor.capture());
+        return captor.getValue();
     }
 
     @Test
     void validSendMessageShouldBePublishedAndAcknowledged() {
         UUID messageId = UUID.randomUUID();
-        MessageEvent accepted = new MessageEvent(
-                messageId, "alice-bob",
-                "alice", "bob", "hi",
-                1L);
-        when(publisherService.publish(any(), eq("alice"))).thenReturn(accepted);
+        Message accepted = new Message(messageId, "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.PENDING);
+        when(inboundMessagePort.publish(any())).thenReturn(accepted);
 
-        MessageToGatewayDto payload = new MessageToGatewayDto(
+        stompController.sendMessage(payload(messageId.toString()), ALICE);
+
+        verify(inboundMessagePort).publish(new SendMessageCommand(
                 messageId.toString(), "alice-bob",
-                "alice", "bob", "hi",
-                1L);
-        stompController.sendMessage(payload, ALICE);
-
-        verify(publisherService).publish(payload, "alice");
+                "alice", "bob",
+                "hi", 1L));
 
         ArgumentCaptor<AckDto> ackCaptor = ArgumentCaptor.forClass(AckDto.class);
         verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/acks"), ackCaptor.capture());
@@ -66,164 +79,106 @@ class StompControllerTest {
     }
 
     @Test
-    void sendMessageWithConversationIdOfOtherUsersShouldBeRejectedAndNeverPublished() {
+    void senderShouldAlwaysComeFromThePrincipalNotThePayload() {
+        UUID messageId = UUID.randomUUID();
+        when(inboundMessagePort.publish(any())).thenReturn(
+                new Message(messageId, "alice-bob",
+                        "alice", "bob",
+                        "hi", 1L, MessageStatus.PENDING));
         MessageToGatewayDto forged = new MessageToGatewayDto(
-                UUID.randomUUID().toString(), "bob-carol",
-                "alice", "dave", "hi",
-                1L);
+                messageId.toString(), "alice-bob",
+                "charlie", "bob",
+                "hi", 1L);
 
         stompController.sendMessage(forged, ALICE);
 
-        verifyNoInteractions(publisherService);
-        ArgumentCaptor<ErrorDto> error = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(
-                eq("alice"), eq("/queue/errors"), error.capture());
-        assertThat(error.getValue().code()).isEqualTo("INVALID_CONVERSATION");
+        ArgumentCaptor<SendMessageCommand> captor = ArgumentCaptor.forClass(SendMessageCommand.class);
+        verify(inboundMessagePort).publish(captor.capture());
+        assertThat(captor.getValue().senderUsername()).isEqualTo("alice");
     }
 
     @Test
-    void conversationIdIsCanonicalRegardlessOfParticipantOrderAndCase() {
-        assertThat(stompController.isCanonicalConversationId(
-                "alice-bob", "alice", "bob")).isTrue();
-        assertThat(stompController.isCanonicalConversationId(
-                "alice-bob", "bob", "alice")).isTrue();
-        assertThat(stompController.isCanonicalConversationId(
-                "alice-bob", " Alice ", "BOB")).isTrue();
-        assertThat(stompController.isCanonicalConversationId(
-                "bob-alice", "alice", "bob")).isFalse();
-        assertThat(stompController.isCanonicalConversationId(
-                null, "alice", "bob")).isFalse();
-    }
-
-    @Test
-    void sendMessageMissingRecipientShouldBeRejected() {
+    void businessRuleViolationShouldBeReportedWithItsCodeAndMessageId() {
         String messageId = UUID.randomUUID().toString();
-        MessageToGatewayDto payload = new MessageToGatewayDto(
-                messageId, "alice-bob",
-                "alice", null, "hi",
-                1L);
+        when(inboundMessagePort.publish(any()))
+                .thenThrow(new InvalidMessageException("INVALID_CONVERSATION", "does not match"));
 
-        stompController.sendMessage(payload, ALICE);
+        stompController.sendMessage(payload(messageId), ALICE);
 
-        verifyNoInteractions(publisherService);
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("MISSING_RECIPIENT");
-    }
-
-    @Test
-    void sendMessageMissingContentShouldBeRejected() {
-        String messageId = UUID.randomUUID().toString();
-        MessageToGatewayDto payload = new MessageToGatewayDto(
-                messageId, "alice-bob",
-                "alice", "bob", null,
-                1L);
-
-        stompController.sendMessage(payload, ALICE);
-
-        verifyNoInteractions(publisherService);
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("MISSING_CONTENT");
-    }
-
-    @Test
-    void sendingMessageToSelfShouldBeRejected() {
-        String messageId = UUID.randomUUID().toString();
-        MessageToGatewayDto payload = new MessageToGatewayDto(
-                messageId, "alice-bob",
-                "alice", "alice", "hi",
-                1L);
-
-        stompController.sendMessage(payload, ALICE);
-
-        verifyNoInteractions(publisherService);
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("SELF_SEND");
+        ErrorDto error = captureError();
+        assertThat(error.code()).isEqualTo("INVALID_CONVERSATION");
+        assertThat(error.reason()).isEqualTo("does not match");
+        assertThat(error.messageId()).isEqualTo(messageId);
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), eq("/queue/acks"), any());
     }
 
     @Test
     void deliveryRejectionShouldBeReportedWhenPersistenceUnavailable() {
-        String messageId = UUID.randomUUID().toString();
-        when(publisherService.publish(any(), eq("alice")))
+        when(inboundMessagePort.publish(any()))
                 .thenThrow(new PersistenceUnavailableException("down", new RuntimeException()));
-        MessageToGatewayDto payload = new MessageToGatewayDto(
-                messageId, "alice-bob",
-                "alice", "bob", "hi",
-                1L);
 
-        stompController.sendMessage(payload, ALICE);
+        stompController.sendMessage(payload(UUID.randomUUID().toString()), ALICE);
 
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("DELIVERY_REJECTED");
+        assertThat(captureError().code()).isEqualTo("DELIVERY_REJECTED");
     }
 
     @Test
     void unexpectedErrorShouldReturnInternalError() {
-        String messageId = UUID.randomUUID().toString();
-        when(publisherService.publish(any(), eq("alice"))).thenThrow(new RuntimeException("Unexpected NPE"));
-        MessageToGatewayDto payload = new MessageToGatewayDto(
-                messageId, "alice-bob",
-                "alice", "bob", "hi",
-                1L);
+        when(inboundMessagePort.publish(any())).thenThrow(new RuntimeException("Unexpected NPE"));
 
-        stompController.sendMessage(payload, ALICE);
+        stompController.sendMessage(payload(UUID.randomUUID().toString()), ALICE);
 
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("INTERNAL_ERROR");
+        assertThat(captureError().code()).isEqualTo("INTERNAL_ERROR");
     }
 
     @Test
-    void ackShouldPublishToKafkaProducerUsingAuthenticatedPrincipalAsRecipient() {
+    void ackShouldDelegateUsingAuthenticatedPrincipalAsRecipient() {
         String messageId = UUID.randomUUID().toString();
-        DeliveryAckDto payload = new DeliveryAckDto(messageId);
 
-        stompController.ack(payload, ALICE);
+        stompController.ack(new DeliveryAckDto(messageId), ALICE);
 
-        ArgumentCaptor<MessageAckEvent> captor = ArgumentCaptor.forClass(MessageAckEvent.class);
-        verify(messageAckProducer).publishAck(captor.capture());
-        MessageAckEvent event = captor.getValue();
-        assertThat(event.messageId()).isEqualTo(messageId);
-        assertThat(event.recipientUsername()).isEqualTo("alice");
-        verifyNoInteractions(publisherService);
+        verify(acknowledgementPort).acknowledge(messageId, "alice");
+        verifyNoInteractions(inboundMessagePort);
         verifyNoInteractions(messagingTemplate);
     }
 
     @Test
-    void ackMissingMessageIdShouldBeRejectedWithStructuredErrorAndNotPublished() {
-        DeliveryAckDto payload = new DeliveryAckDto(null);
+    void ackThatCannotBeRecordedShouldBeReportedToTheClientWithItsMessageId() {
+        String messageId = UUID.randomUUID().toString();
+        doThrow(new BackboneUnavailableException("down", null))
+                .when(acknowledgementPort).acknowledge(messageId, "alice");
 
-        stompController.ack(payload, ALICE);
+        stompController.ack(new DeliveryAckDto(messageId), ALICE);
 
-        verifyNoInteractions(messageAckProducer);
-        ArgumentCaptor<ErrorDto> errCaptor = ArgumentCaptor.forClass(ErrorDto.class);
-        verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), errCaptor.capture());
-        assertThat(errCaptor.getValue().code()).isEqualTo("MISSING_MESSAGE_ID");
+        ErrorDto error = captureError();
+        assertThat(error.code()).isEqualTo("ACK_NOT_RECORDED");
+        assertThat(error.messageId()).isEqualTo(messageId);
+    }
+
+    @Test
+    void ackMissingMessageIdShouldBeRejectedWithStructuredErrorAndNotForwarded() {
+        stompController.ack(new DeliveryAckDto(null), ALICE);
+
+        verifyNoInteractions(acknowledgementPort);
+        assertThat(captureError().code()).isEqualTo("MISSING_MESSAGE_ID");
     }
 
     @Test
     void ackBlankMessageIdShouldBeRejected() {
-        DeliveryAckDto payload = new DeliveryAckDto("   ");
+        stompController.ack(new DeliveryAckDto("   "), ALICE);
 
-        stompController.ack(payload, ALICE);
-
-        verifyNoInteractions(messageAckProducer);
+        verifyNoInteractions(acknowledgementPort);
         verify(messagingTemplate).convertAndSendToUser(eq("alice"), eq("/queue/errors"), any(ErrorDto.class));
     }
 
     @Test
     void ackShouldNeverTrustAClientDeclaredIdentityBecauseThePayloadCarriesNone() {
-        DeliveryAckDto payload = new DeliveryAckDto(UUID.randomUUID().toString());
+        String messageId = UUID.randomUUID().toString();
         Principal bob = () -> "bob";
 
-        stompController.ack(payload, bob);
+        stompController.ack(new DeliveryAckDto(messageId), bob);
 
-        ArgumentCaptor<MessageAckEvent> captor = ArgumentCaptor.forClass(MessageAckEvent.class);
-        verify(messageAckProducer).publishAck(captor.capture());
-        assertThat(captor.getValue().recipientUsername()).isEqualTo("bob");
+        verify(acknowledgementPort).acknowledge(messageId, "bob");
     }
 
     @Test

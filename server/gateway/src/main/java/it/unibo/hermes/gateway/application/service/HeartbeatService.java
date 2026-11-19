@@ -1,6 +1,6 @@
 package it.unibo.hermes.gateway.application.service;
 
-import it.unibo.hermes.gateway.infrastructure.adapter.primary.websocket.WebSocketSessionRegistry;
+import it.unibo.hermes.gateway.application.port.secondary.ConnectedClientsPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,7 +15,7 @@ public class HeartbeatService {
 
     private static final Logger log = LoggerFactory.getLogger(HeartbeatService.class);
 
-    private final WebSocketSessionRegistry registry;
+    private final ConnectedClientsPort registry;
     private final PresenceService presenceService;
     private final String gatewayInstanceId;
 
@@ -26,7 +26,7 @@ public class HeartbeatService {
      * @param presenceService   the service managing user presence state updates
      * @param gatewayInstanceId the identifier of this Gateway instance, written when a lost entry is restored
      */
-    public HeartbeatService(WebSocketSessionRegistry registry,
+    public HeartbeatService(ConnectedClientsPort registry,
                             PresenceService presenceService,
                             @Value("${hermes.gateway.instance-id:gateway-1}") String gatewayInstanceId) {
         this.registry = registry;

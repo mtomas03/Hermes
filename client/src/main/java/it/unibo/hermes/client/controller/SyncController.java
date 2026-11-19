@@ -11,14 +11,20 @@ import it.unibo.hermes.client.model.state.ClientStateModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import reactor.core.Disposable;
+import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Controller responsible for managing the synchronisation of conversations
@@ -35,6 +41,9 @@ public class SyncController {
     private final ConcurrentMap<String, Mono<SyncResult>> syncsInProgress =
             new ConcurrentHashMap<>();
     private final Set<String> syncedConversations = ConcurrentHashMap.newKeySet();
+    private final AtomicLong syncGeneration = new AtomicLong(0);
+    private final AtomicReference<Disposable.Composite> activeSyncs =
+            new AtomicReference<>(Disposables.composite());
 
     public SyncController(SyncService syncService,
                           LocalPersistenceService persistence,
@@ -49,24 +58,39 @@ public class SyncController {
      */
     public void syncAll() {
         AuthToken token = stateModel.getAuthToken();
-        if (token == null || !token.isValid()) {
+        if (token == null || token.isExpired()) {
             log.warn("Skipping sync - no valid auth token");
             return;
         }
 
+        long gen = syncGeneration.get();
+        User sessionUser = stateModel.getCurrentUser();
+        Disposable.Composite sessionDisposables = activeSyncs.get();
+
         log.info("Starting full synchronisation");
         stateModel.setSyncing(true);
-        stateModel.setStatusMessage("Synchronising...");
+        stateModel.setStatusMessage("Synchronising");
 
-        syncService.fetchConversations(token.bearerHeader())
+        Disposable sub = syncService.fetchConversations(token.bearerHeader())
                 .subscribeOn(Schedulers.boundedElastic())
+                .publishOn(Schedulers.boundedElastic())
                 .subscribe(
-                        list -> processConversations(list, token),
+                        list -> {
+                            if (!isSessionActive(gen, sessionUser)) {
+                                log.debug("Discarding fetched conversations from stale sync session");
+                                return;
+                            }
+                            processConversations(list, token, gen, sessionUser, sessionDisposables);
+                        },
                         err -> {
+                            if (!isSessionActive(gen, sessionUser)) {
+                                return;
+                            }
                             log.error("Failed to fetch conversations", err);
                             stateModel.setSyncing(false);
                             stateModel.setStatusMessage("Sync failed");
                         });
+        sessionDisposables.add(sub);
     }
 
     /**
@@ -78,7 +102,7 @@ public class SyncController {
      */
     public void syncConversationIfNeeded(String conversationId) {
         AuthToken token = stateModel.getAuthToken();
-        if (token == null || !token.isValid()) {
+        if (token == null || token.isExpired()) {
             log.warn("Skipping conversation sync - no valid auth token");
             return;
         }
@@ -88,15 +112,27 @@ public class SyncController {
             return;
         }
 
-        startConversationSync(conversationId, token)
+        long gen = syncGeneration.get();
+        User sessionUser = stateModel.getCurrentUser();
+        Disposable.Composite sessionDisposables = activeSyncs.get();
+
+        Disposable sub = startConversationSync(conversationId, token, gen, sessionUser)
                 .subscribe(
                         result -> {
+                            if (!isSessionActive(gen, sessionUser)) {
+                                return;
+                            }
                             Conversation selected = stateModel.getSelectedConversation();
                             if (selected != null && conversationId.equals(selected.conversationId())) {
                                 refreshActiveMessages(conversationId);
                             }
                         },
-                        err -> log.warn("Conversation sync failed for {}: {}", conversationId, err.getMessage()));
+                        err -> {
+                            if (!(err instanceof CancellationException)) {
+                                log.warn("Conversation sync failed for {}: {}", conversationId, err.getMessage());
+                            }
+                        });
+        sessionDisposables.add(sub);
     }
 
     /**
@@ -106,26 +142,48 @@ public class SyncController {
      * @param conversationId the unique identifier of the conversation whose messages are to be refreshed
      */
     public void refreshActiveMessages(String conversationId) {
-        List<Message> messages = persistence.loadMessages(conversationId);
-        stateModel.replaceMessages(messages);
+        long gen = syncGeneration.get();
+        Schedulers.boundedElastic().schedule(() -> {
+            if (syncGeneration.get() != gen || isConversationNotSelected(conversationId)) {
+                return;
+            }
+            List<Message> messages = persistence.loadMessages(conversationId);
+            if (syncGeneration.get() != gen || isConversationNotSelected(conversationId)) {
+                return;
+            }
+            stateModel.mergeMessages(messages);
+        });
     }
 
     /**
-     * Resets the synchronisation state, clearing the set of synced conversations
-     * and the in-progress sync operations.
+     * Resets the synchronisation state, cancelling all in-flight sync operations
+     * and clearing the set of synced conversations.
      */
     public void resetSyncState() {
+        syncGeneration.incrementAndGet();
         syncedConversations.clear();
         syncsInProgress.clear();
+        activeSyncs.getAndSet(Disposables.composite()).dispose();
     }
 
-    private void processConversations(List<ConversationDto> conversationDtos, AuthToken token) {
+    private void processConversations(List<ConversationDto> conversationDtos,
+                                      AuthToken token,
+                                      long gen,
+                                      User sessionUser,
+                                      Disposable.Composite sessionDisposables) {
         for (ConversationDto dto : conversationDtos) {
+            if (!isSessionActive(gen, sessionUser)) {
+                log.debug("Aborting conversation persistence - session logged out or changed");
+                return;
+            }
             User user = new User(dto.otherParticipantUsername());
             Conversation conversation = new Conversation(dto.conversationId(), user);
             persistence.saveConversation(conversation);
         }
 
+        if (!isSessionActive(gen, sessionUser)) {
+            return;
+        }
         stateModel.setConversations(persistence.loadAllConversations());
 
         Conversation selected = stateModel.getSelectedConversation();
@@ -143,42 +201,79 @@ public class SyncController {
             );
         }
 
-        ordered
-                .flatMap(dto -> startConversationSync(dto.conversationId(), token)
+        Disposable sub = ordered
+                .flatMap(dto -> startConversationSync(dto.conversationId(), token, gen, sessionUser)
                                 .onErrorResume(err -> Mono.empty()),
                         4)
                 .subscribe(
                         result -> {
-                            if (selectedId != null && selectedId.equals(result.conversationId())) {
+                            if (isSessionActive(gen, sessionUser)
+                                    && selectedId != null
+                                    && selectedId.equals(result.conversationId())) {
                                 refreshActiveMessages(result.conversationId());
                             }
                         },
-                        err -> log.warn("Partial sync error: {}", err.getMessage()),
+                        err -> {
+                            if (isSessionActive(gen, sessionUser)) {
+                                log.warn("Partial sync error: {}", err.getMessage());
+                            }
+                        },
                         () -> {
-                            log.info("Conversation synchronization complete");
-                            stateModel.setSyncing(false);
-                            stateModel.setStatusMessage("Online");
+                            if (isSessionActive(gen, sessionUser)) {
+                                log.info("Conversation synchronization complete");
+                                stateModel.setSyncing(false);
+                                stateModel.setStatusMessage("Online");
+                            }
                         });
+        sessionDisposables.add(sub);
     }
 
-    private Mono<SyncResult> startConversationSync(String conversationId, AuthToken token) {
-        return syncsInProgress.computeIfAbsent(
-                conversationId,
-                id -> syncService
-                        .syncConversation(id, token.bearerHeader())
-                        .map(response -> {
-                            User current = stateModel.getCurrentUser();
-                            syncService.applySync(response, current != null ? current.username() : null);
-                            return new SyncResult(id, response.messages().size());
-                        })
-                        .doOnSuccess(result -> {
+    private Mono<SyncResult> startConversationSync(String conversationId,
+                                                   AuthToken token,
+                                                   long gen,
+                                                   User sessionUser) {
+        return syncsInProgress.computeIfAbsent(conversationId, id -> {
+            AtomicReference<Mono<SyncResult>> holder = new AtomicReference<>();
+            Mono<SyncResult> mono = syncService
+                    .syncConversation(id, token.bearerHeader())
+                    .publishOn(Schedulers.boundedElastic())
+                    .<SyncResult>handle((response, sink) -> {
+                        if (!isSessionActive(gen, sessionUser)) {
+                            sink.error(new CancellationException(
+                                    "Sync cancelled due to logout or session change"));
+                            return;
+                        }
+                        User current = stateModel.getCurrentUser();
+                        syncService.applySync(response, current != null ? current.username() : null);
+                        sink.next(new SyncResult(id, response.messages().size()));
+                    })
+                    .doOnSuccess(result -> {
+                        if (isSessionActive(gen, sessionUser)) {
                             syncedConversations.add(id);
-                            log.info("Conversation {} synchronized: {} messages", result.conversationId(), result.messageCount());
-                        })
-                        .doOnError(err -> log.warn("Sync failed for {}: {}", id, err.getMessage()))
-                        .doFinally(signal -> syncsInProgress.remove(id))
-                        .cache()
-        );
+                            log.info("Conversation {} synchronized: {} messages",
+                                    result.conversationId(), result.messageCount());
+                        }
+                    })
+                    .doOnError(err -> {
+                        if (!(err instanceof CancellationException)) {
+                            log.warn("Sync failed for {}: {}", id, err.getMessage());
+                        }
+                    })
+                    .doFinally(signal -> syncsInProgress.remove(id, holder.get()))
+                    .cache();
+            holder.set(mono);
+            return mono;
+        });
+    }
+
+    private boolean isSessionActive(long expectedGen, User expectedUser) {
+        return syncGeneration.get() == expectedGen
+                && Objects.equals(expectedUser, stateModel.getCurrentUser());
+    }
+
+    private boolean isConversationNotSelected(String conversationId) {
+        Conversation selected = stateModel.getSelectedConversation();
+        return selected == null || !conversationId.equals(selected.conversationId());
     }
 
     private record SyncResult(String conversationId, int messageCount) {
