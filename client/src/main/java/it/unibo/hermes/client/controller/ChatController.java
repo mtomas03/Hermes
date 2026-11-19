@@ -110,7 +110,7 @@ public class ChatController {
             Message msg = messageService.send(
                     self.username(),
                     conv.conversationId(),
-                    conv.recipientUsername().username(),
+                    conv.otherUser().username(),
                     trimmed);
 
             if (self.equals(stateModel.getCurrentUser())
@@ -132,7 +132,7 @@ public class ChatController {
         AuthToken token = stateModel.getAuthToken();
         User self = stateModel.getCurrentUser();
 
-        if (token == null || !token.isValid()) {
+        if (token == null || token.isExpired()) {
             onError.accept("Not authenticated.");
             return;
         }

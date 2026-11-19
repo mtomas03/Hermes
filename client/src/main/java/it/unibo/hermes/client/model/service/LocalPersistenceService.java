@@ -1,5 +1,6 @@
 package it.unibo.hermes.client.model.service;
 
+import it.unibo.hermes.client.infrastructure.exception.SQLitePersistenceException;
 import it.unibo.hermes.client.model.domain.*;
 import it.unibo.hermes.client.model.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,38 @@ public class LocalPersistenceService {
      */
     public boolean saveMessage(Message msg) {
         return messageRepository.upsertMessage(msg);
+    }
+
+    /**
+     * Same as {@link #saveMessage(Message)}, but first creates
+     * the local conversation if it is missing, in the same transaction with the message.
+     *
+     * @param msg           the received message
+     * @param localUsername the local user or {@code null} if unknown
+     * @return {@code true} if the message is now durably stored, {@code false} otherwise
+     */
+    public boolean saveInboundMessage(Message msg, String localUsername) {
+        String peer = peerOf(msg, localUsername);
+        if (peer == null) {
+            return messageRepository.upsertMessage(msg);
+        }
+
+        boolean[] stored = {false};
+        Runnable op = () -> {
+            conversationRepository.insertIfAbsent(
+                    new Conversation(msg.getConversationId(), new User(peer)));
+            stored[0] = messageRepository.upsertMessage(msg);
+        };
+        try {
+            if (db != null) {
+                db.inTransaction(op);
+            } else {
+                op.run();
+            }
+        } catch (SQLitePersistenceException e) {
+            return false;
+        }
+        return stored[0];
     }
 
     /**
@@ -195,7 +228,7 @@ public class LocalPersistenceService {
      */
     public Optional<AuthToken> loadValidAuthToken() {
         Optional<AuthToken> stored = authTokenRepository.find();
-        if (stored.isPresent() && !stored.get().isValid()) {
+        if (stored.isPresent() && stored.get().isExpired()) {
             authTokenRepository.clear();
             return Optional.empty();
         }
@@ -247,5 +280,17 @@ public class LocalPersistenceService {
      */
     public long getLastLogicalTimestamp(String conversationId) {
         return messageRepository.getLastLogicalTimestamp(conversationId);
+    }
+
+    private String peerOf(Message msg, String localUsername) {
+        if (localUsername == null) {
+            return null;
+        } else if (localUsername.equalsIgnoreCase(msg.getRecipientUsername())) {
+            return msg.getSenderUsername();
+        } else if (localUsername.equalsIgnoreCase(msg.getSenderUsername())) {
+            return msg.getRecipientUsername();
+        } else {
+            return null;
+        }
     }
 }

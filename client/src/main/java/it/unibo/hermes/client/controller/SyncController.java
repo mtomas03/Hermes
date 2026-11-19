@@ -58,7 +58,7 @@ public class SyncController {
      */
     public void syncAll() {
         AuthToken token = stateModel.getAuthToken();
-        if (token == null || !token.isValid()) {
+        if (token == null || token.isExpired()) {
             log.warn("Skipping sync - no valid auth token");
             return;
         }
@@ -102,7 +102,7 @@ public class SyncController {
      */
     public void syncConversationIfNeeded(String conversationId) {
         AuthToken token = stateModel.getAuthToken();
-        if (token == null || !token.isValid()) {
+        if (token == null || token.isExpired()) {
             log.warn("Skipping conversation sync - no valid auth token");
             return;
         }

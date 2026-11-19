@@ -7,18 +7,16 @@ import java.util.Objects;
  * Holds the JWT and associated metadata obtained after login.
  */
 public record AuthToken(String rawToken, Instant expiresAt) {
-    public AuthToken(String rawToken, Instant expiresAt) {
-        this.rawToken = Objects.requireNonNull(rawToken);
-        this.expiresAt = expiresAt;
+    public AuthToken {
+        Objects.requireNonNull(rawToken);
+        Objects.requireNonNull(expiresAt);
     }
 
     /**
-     * Returns true if the token has not yet expired.
+     * Returns true if the token has expired.
      */
-    public boolean isValid() {
-        return rawToken != null
-                && expiresAt != null
-                && Instant.now().isBefore(expiresAt);
+    public boolean isExpired() {
+        return !Instant.now().isBefore(expiresAt);
     }
 
     public String bearerHeader() {

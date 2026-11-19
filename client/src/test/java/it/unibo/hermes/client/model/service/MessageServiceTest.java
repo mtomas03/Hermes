@@ -17,11 +17,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -415,7 +413,9 @@ class MessageServiceTest {
         when(wsService.sendMessage(any())).thenReturn(true);
 
         assertEquals(1, messageService.flushOutbox("alice"));
+        messageService.resetInFlight(); // the session was lost: no ACK can be received
         assertEquals(1, messageService.flushOutbox("alice"));
+        messageService.resetInFlight();
         assertEquals(0, messageService.flushOutbox("alice"));
 
         verify(wsService, times(2)).sendMessage(any());
@@ -446,5 +446,151 @@ class MessageServiceTest {
                 "alice", "bob",
                 "hi " + messageId,
                 logicalTimestamp, MessageStatus.PENDING);
+    }
+
+
+    @Test
+    void receiveAndPersistWithALocalUserStoresTheMessageTogetherWithItsConversation() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
+        when(persistence.saveInboundMessage(any(), eq("alice"))).thenReturn(true);
+
+        Message result = messageService.receiveAndPersist(dto, "alice");
+
+        assertEquals("m1", result.getMessageId());
+        verify(persistence).saveInboundMessage(result, "alice");
+        verify(persistence, never()).saveMessage(any());
+    }
+
+    @Test
+    void receiveAndPersistWithALocalUserFailsWhenTheMessageCannotBeStored() {
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
+        when(persistence.saveInboundMessage(any(), eq("alice"))).thenReturn(false);
+
+        assertThrows(
+                MessagePersistenceException.class,
+                () -> messageService.receiveAndPersist(dto, "alice"));
+    }
+
+    @Test
+    void aBurstOfSendsDoesNotRetransmitInFlightMessagesNorConsumeTheirDeliveryAttempts() {
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        for (int i = 0; i < 6; i++) { // more than max-delivery-attempts (3)
+            messageService.send(
+                    "alice", "alice-bob",
+                    "bob", "m" + i);
+        }
+
+        verify(wsService, times(6))
+                .sendMessage(any());
+        verify(persistence, times(6))
+                .incrementDeliveryAttempts(anyString());
+        verify(persistence, never())
+                .updateMessageStatus(anyString(), eq(MessageStatus.FAILED));
+    }
+
+    @Test
+    void aFlushDoesNotRetransmitAMessageStillAwaitingItsAck() {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(m1));
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+        assertEquals(0, messageService.flushOutbox("alice"));
+
+        verify(wsService, times(1)).sendMessage(any());
+        verify(persistence, times(1)).incrementDeliveryAttempts("m1");
+    }
+
+    @Test
+    void anUnacknowledgedMessageIsRetransmittedAfterTheSessionIsReset() {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(m1));
+        when(wsService.sendMessage(any())).thenReturn(true);
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+        messageService.resetInFlight();
+        assertEquals(1, messageService.flushOutbox("alice"));
+
+        verify(wsService, times(2)).sendMessage(any());
+        verify(persistence, times(2)).incrementDeliveryAttempts("m1");
+    }
+
+    @Test
+    void aServerReplyReleasesTheMessageFromTheInFlightSet() {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(m1));
+        when(wsService.sendMessage(any())).thenReturn(true);
+        messageService.flushOutbox("alice");
+
+        messageService.acknowledgeDelivery("m1", MessageStatus.SENT.name());
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+    }
+
+    @Test
+    void aRejectedMessageIsReleasedFromTheInFlightSet() {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(m1));
+        when(wsService.sendMessage(any())).thenReturn(true);
+        messageService.flushOutbox("alice");
+
+        messageService.markRejected("m1");
+
+        assertEquals(1, messageService.flushOutbox("alice"));
+    }
+
+    @Test
+    void aFailedSubmissionIsNotTrackedAsInFlight() {
+        Message m1 = createPendingMessage("m1", 1L);
+        when(persistence.loadPendingOutbound("alice")).thenReturn(List.of(m1));
+        when(wsService.sendMessage(any())).thenReturn(false, true);
+
+        assertEquals(0, messageService.flushOutbox("alice"));
+        assertEquals(1, messageService.flushOutbox("alice"));
+    }
+
+    @Test
+    void concurrentSendsTransmitEveryMessageExactlyOnce() throws Exception {
+        int total = 20;
+        doAnswer(inv -> {
+            synchronized (fakeOutbox) {
+                fakeOutbox.add(inv.getArgument(0));
+            }
+            return true;
+        }).when(persistence).saveMessage(any());
+        doAnswer(inv -> {
+            synchronized (fakeOutbox) {
+                return new ArrayList<>(fakeOutbox);
+            }
+        }).when(persistence).loadPendingOutbound(anyString());
+        List<String> transmitted = Collections.synchronizedList(new ArrayList<>());
+        when(wsService.sendMessage(any())).thenAnswer(inv -> {
+            transmitted.add(((OutboundMessageDto) inv.getArgument(0)).messageId());
+            return true;
+        });
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(8)) {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int i = 0; i < total; i++) {
+                String content = "m" + i;
+                futures.add(pool.submit(() -> messageService.send(
+                        "alice", "alice-bob",
+                        "bob", content)));
+            }
+            for (var f : futures) {
+                f.get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        assertEquals(total, transmitted.size());
+        assertEquals(total, new HashSet<>(transmitted).size());
+        verify(persistence, never()).updateMessageStatus(anyString(), eq(MessageStatus.FAILED));
     }
 }

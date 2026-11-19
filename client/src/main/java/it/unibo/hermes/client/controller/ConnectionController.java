@@ -19,6 +19,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -114,6 +116,7 @@ public class ConnectionController {
                 return;
             }
             cancelPendingRetryReset();
+            msgService.resetInFlight();
             log.info("WebSocket disconnected");
             stateModel.setConnectionState(ConnectionState.DISCONNECTED);
             stateModel.setStatusMessage("Offline");
@@ -139,6 +142,7 @@ public class ConnectionController {
             wsService.disconnect();
         }
         msgService.resetClocks();
+        msgService.resetInFlight();
         stateModel.setConnectionState(ConnectionState.DISCONNECTED);
         stateModel.setStatusMessage("Disconnected");
     }
@@ -165,13 +169,20 @@ public class ConnectionController {
                 return;
             }
 
+            String localUsername = currentUser != null ? currentUser.username() : null;
             Message msg;
             try {
-                msg = msgService.receiveAndPersist(dto);
+                msg = localUsername != null
+                        ? msgService.receiveAndPersist(dto, localUsername)
+                        : msgService.receiveAndPersist(dto);
             } catch (MessagePersistenceException e) {
                 log.error("Could not persist inbound message {} - no ACK will be sent: {}",
                         dto.messageId(), e.getMessage());
                 return;
+            }
+
+            if (localUsername != null) {
+                addConversationIfNew(dto, localUsername);
             }
 
             boolean isRecipient = currentUser == null
@@ -188,6 +199,21 @@ public class ConnectionController {
                 stateModel.appendMessage(msg);
             }
         }
+    }
+
+    private void addConversationIfNew(InboundMessageDto dto, String localUsername) {
+        List<Conversation> knownConversations = stateModel.getConversations();
+        if (knownConversations.stream()
+                .anyMatch(c -> c.conversationId().equals(dto.conversationId()))) {
+            return;
+        }
+        String peer = localUsername.equalsIgnoreCase(dto.recipientUsername())
+                ? dto.senderUsername()
+                : dto.recipientUsername();
+        List<Conversation> newConversations = new ArrayList<>(knownConversations.size() + 1);
+        newConversations.add(new Conversation(dto.conversationId(), new User(peer)));
+        newConversations.addAll(knownConversations);
+        stateModel.setConversations(newConversations);
     }
 
     private void handleAck(AckDto ack, long gen) {
@@ -224,6 +250,7 @@ public class ConnectionController {
                 return;
             }
             try {
+                msgService.resetInFlight();
                 msgService.flushOutbox(self.username());
             } catch (RuntimeException e) {
                 log.warn("Outbox flush failed, messages stay pending: {}", e.getMessage());

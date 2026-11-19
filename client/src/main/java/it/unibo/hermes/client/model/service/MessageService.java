@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -32,6 +33,7 @@ public class MessageService {
     private final ConcurrentMap<String, AtomicLong> lamportClocks = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
     private final AtomicBoolean flushAgain = new AtomicBoolean(false);
+    private final Set<String> messagesWaitingACK = ConcurrentHashMap.newKeySet();
 
     public MessageService(WebSocketService wsService, LocalPersistenceService persistenceService) {
         this(wsService, persistenceService, new AppProperties());
@@ -117,6 +119,9 @@ public class MessageService {
                 int maxAttempts = props.getMaxDeliveryAttempts();
 
                 for (Message pending : persistenceService.loadPendingOutbound(senderUsername)) {
+                    if (messagesWaitingACK.contains(pending.getMessageId())) {
+                        continue;
+                    }
                     if (maxMessageLength > 0 && pending.getContent().length() > maxMessageLength) {
                         log.error("Isolating oversized message {} ({} chars > max {}): marking FAILED",
                                 pending.getMessageId(), pending.getContent().length(), maxMessageLength);
@@ -139,6 +144,7 @@ public class MessageService {
                         isFlushing.set(false);
                         return totalSubmitted + passSubmitted;
                     }
+                    messagesWaitingACK.add(pending.getMessageId());
                     persistenceService.incrementDeliveryAttempts(pending.getMessageId());
                     passSubmitted++;
                 }
@@ -163,10 +169,24 @@ public class MessageService {
      * into a domain message and persists it.
      *
      * @param dto the inbound message DTO
-     * @return the persisted domain message entity
+     * @return the persisted domain message
      * @throws MessagePersistenceException if the message could not be persisted
      */
     public Message receiveAndPersist(InboundMessageDto dto) {
+        return receiveAndPersist(dto, null);
+    }
+
+    /**
+     * Same as {@link #receiveAndPersist(InboundMessageDto)}, but when {@code localUsername} is known
+     * it also creates the local conversation row if the message belongs to a conversation
+     * not yet known locally, atomically with the message.
+     *
+     * @param dto           the inbound message DTO
+     * @param localUsername the local user or {@code null} if unknown
+     * @return the persisted domain message
+     * @throws MessagePersistenceException if the message could not be persisted
+     */
+    public Message receiveAndPersist(InboundMessageDto dto, String localUsername) {
         AtomicLong clock = getConversationClock(dto.conversationId());
         long msgClock = dto.logicalTimestamp() != null ? dto.logicalTimestamp() : 0L;
         clock.updateAndGet(current -> Math.max(current, msgClock) + 1);
@@ -184,7 +204,9 @@ public class MessageService {
                 dto.logicalTimestamp(),
                 initialStatus);
 
-        boolean persisted = persistenceService.saveMessage(msg);
+        boolean persisted = localUsername == null
+                ? persistenceService.saveMessage(msg)
+                : persistenceService.saveInboundMessage(msg, localUsername);
         if (!persisted) {
             throw new MessagePersistenceException(dto.messageId());
         }
@@ -199,6 +221,7 @@ public class MessageService {
      * @param serverStatus the status string reported by the gateway, may be {@code null}
      */
     public void acknowledgeDelivery(String messageId, String serverStatus) {
+        messagesWaitingACK.remove(messageId);
         MessageStatus target = MessageStatus
                 .fromServerStatus(serverStatus)
                 .filter(s -> s != MessageStatus.PENDING)
@@ -235,6 +258,7 @@ public class MessageService {
      * @param messageId the unique identifier of the rejected message
      */
     public void markRejected(String messageId) {
+        messagesWaitingACK.remove(messageId);
         persistenceService.updateMessageStatus(messageId, MessageStatus.FAILED);
     }
 
@@ -248,6 +272,13 @@ public class MessageService {
     public void syncConversationClock(String conversationId, long remoteMaxClock) {
         getConversationClock(conversationId)
                 .updateAndGet(current -> Math.max(current, remoteMaxClock));
+    }
+
+    /**
+     * Resets the set of messages that are waiting for server ACKs.
+     */
+    public void resetInFlight() {
+        messagesWaitingACK.clear();
     }
 
     /**

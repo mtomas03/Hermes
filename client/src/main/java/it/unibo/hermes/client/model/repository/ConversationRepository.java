@@ -40,10 +40,37 @@ public class ConversationRepository {
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, conversation.conversationId());
-            ps.setString(2, conversation.recipientUsername().username());
+            ps.setString(2, conversation.otherUser().username());
             ps.executeUpdate();
         } catch (SQLException e) {
             log.error("Failed to upsert conversation {}", conversation.conversationId(), e);
+        }
+    }
+
+    /**
+     * Inserts a conversation, only if it does not already exist.
+     *
+     * @param conversation the conversation to insert
+     * @return {@code true} if a new conversation was inserted,
+     * {@code false} if the conversation already existed
+     * @throws SQLitePersistenceException if the insert fails, so an enclosing transaction rolls back
+     */
+    public boolean insertIfAbsent(Conversation conversation) {
+        String sql = """
+                INSERT INTO conversation
+                    (conversation_id, recipient_username)
+                VALUES (?, ?)
+                ON CONFLICT(conversation_id) DO NOTHING
+                """;
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, conversation.conversationId());
+            ps.setString(2, conversation.otherUser().username());
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            log.error("Failed to insert conversation {}", conversation.conversationId(), e);
+            throw new SQLitePersistenceException(
+                    "Failed to insert conversation " + conversation.conversationId(), e);
         }
     }
 
@@ -67,7 +94,7 @@ public class ConversationRepository {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             for (Conversation conversation : conversations) {
                 ps.setString(1, conversation.conversationId());
-                ps.setString(2, conversation.recipientUsername().username());
+                ps.setString(2, conversation.otherUser().username());
                 ps.addBatch();
             }
             ps.executeBatch();

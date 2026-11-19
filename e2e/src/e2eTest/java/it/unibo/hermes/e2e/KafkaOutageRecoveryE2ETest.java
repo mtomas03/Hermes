@@ -55,8 +55,8 @@ class KafkaOutageRecoveryE2ETest {
         bob = new TestClient(TestIds.testId("kafkaB"));
         alice.registerAndLogin(TIMEOUT);
         bob.registerAndLogin(TIMEOUT);
-        alice.connectAndAwait(TIMEOUT);
-        bob.connectAndAwait(TIMEOUT);
+        alice.resyncOnConnect().connectAndAwait(TIMEOUT);
+        bob.resyncOnConnect().connectAndAwait(TIMEOUT);
 
         String conversationId = TestIds.conversationId(alice.getUsername(), bob.getUsername());
         Kubectl.scaleStatefulSetAndAwait(STATEFUL_SET, APP_LABEL, 0, E2EConfig.get().namespace(), KAFKA_TIMEOUT);
@@ -93,7 +93,12 @@ class KafkaOutageRecoveryE2ETest {
 
         String afterId = alice.sendMessageTo(bob.getUsername(), TestIds.messageBody("afterRecovery"));
         Poller.pollUntil(() -> bob.findLocalMessage(conversationId, afterId), KAFKA_TIMEOUT,
-                "real-time delivery of " + afterId + " after Kafka recovered");
+                "message " + afterId + " to reach " + bob.getUsername()
+                        + " after Kafka recovered (real-time push or synchronisation after FORCE_RECONNECT)");
         alice.awaitAcknowledged(conversationId, afterId, KAFKA_TIMEOUT);
+        assertEquals(1, bob.localMessages(conversationId).stream()
+                .filter(m -> m.getMessageId().equals(afterId)).count(), "no local duplicates after recovery");
+        assertEquals(1, bob.localMessages(conversationId).stream()
+                .filter(m -> m.getMessageId().equals(messageId)).count(), "the outage message is still stored once");
     }
 }

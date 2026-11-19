@@ -6,6 +6,7 @@ import it.unibo.hermes.client.model.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -250,5 +251,97 @@ class LocalPersistenceServiceTest {
 
         assertThrows(SQLitePersistenceException.class,
                 () -> service.updateMessageStatus("m1", MessageStatus.ACKNOWLEDGED));
+    }
+
+
+    @Test
+    void savingAnInboundMessageCreatesItsConversationBeforeTheMessage() {
+        Message msg = new Message("m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(true);
+
+        boolean result = service.saveInboundMessage(msg, "alice");
+
+        assertTrue(result);
+        InOrder order = inOrder(conversationRepository, messageRepository);
+        order.verify(conversationRepository).insertIfAbsent(
+                new Conversation("alice-bob", new User("bob")));
+        order.verify(messageRepository).upsertMessage(msg);
+    }
+
+    @Test
+    void savingAnInboundMessageSentByTheLocalUserUsesTheRecipientAsPeer() {
+        Message msg = new Message("m1", "alice-bob",
+                "alice", "bob",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(true);
+
+        service.saveInboundMessage(msg, "alice");
+
+        verify(conversationRepository).insertIfAbsent(
+                new Conversation("alice-bob", new User("bob")));
+    }
+
+    @Test
+    void savingAnInboundMessageNeverOverwritesAnExistingConversation() {
+        Message msg = new Message("m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(true);
+
+        service.saveInboundMessage(msg, "alice");
+
+        verify(conversationRepository, never()).upsert(any());
+        verify(conversationRepository, never()).upsertAll(any());
+    }
+
+    @Test
+    void savingAnInboundMessageWithoutAKnownLocalUserDoesNotInventAConversation() {
+        Message msg = new Message("m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(true);
+
+        assertTrue(service.saveInboundMessage(msg, null));
+
+        verifyNoInteractions(conversationRepository);
+    }
+
+    @Test
+    void savingAnInboundMessageNotInvolvingTheLocalUserDoesNotInventAConversation() {
+        Message msg = new Message("m1", "bob-charlie",
+                "bob", "charlie",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(false);
+
+        assertFalse(service.saveInboundMessage(msg, "alice"));
+
+        verifyNoInteractions(conversationRepository);
+    }
+
+    @Test
+    void savingAnInboundMessageReportsFailureWhenTheMessageCannotBeStored() {
+        Message msg = new Message("m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(messageRepository.upsertMessage(msg)).thenReturn(false);
+
+        assertFalse(service.saveInboundMessage(msg, "alice"));
+    }
+
+    @Test
+    void savingAnInboundMessageReportsFailureAndSkipsTheMessageWhenTheConversationCannotBeCreated() {
+        Message msg = new Message("m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(conversationRepository.insertIfAbsent(any()))
+                .thenThrow(new SQLitePersistenceException(
+                        "Failed to create conversation",
+                        new SQLException("sqlite error")));
+
+        assertFalse(service.saveInboundMessage(msg, "alice"));
+
+        verify(messageRepository, never()).upsertMessage(any());
     }
 }

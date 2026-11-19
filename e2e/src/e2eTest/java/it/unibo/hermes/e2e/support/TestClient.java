@@ -1,15 +1,10 @@
 package it.unibo.hermes.e2e.support;
 
 import it.unibo.hermes.client.controller.ConnectionController;
+import it.unibo.hermes.client.controller.SyncController;
 import it.unibo.hermes.client.infrastructure.config.AppConfig;
-import it.unibo.hermes.client.model.domain.Conversation;
-import it.unibo.hermes.client.model.domain.Message;
-import it.unibo.hermes.client.model.domain.MessageStatus;
-import it.unibo.hermes.client.model.domain.User;
-import it.unibo.hermes.client.model.dto.AuthResponseDto;
-import it.unibo.hermes.client.model.dto.InboundMessageDto;
-import it.unibo.hermes.client.model.dto.OutboundMessageDto;
-import it.unibo.hermes.client.model.dto.SyncResponseDto;
+import it.unibo.hermes.client.model.domain.*;
+import it.unibo.hermes.client.model.dto.*;
 import it.unibo.hermes.client.model.service.*;
 import it.unibo.hermes.client.model.state.ClientStateModel;
 import it.unibo.hermes.client.model.state.ConnectionState;
@@ -20,6 +15,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,12 +36,13 @@ public final class TestClient implements AutoCloseable {
     private final LocalPersistenceService persistenceService;
     private final SyncService syncService;
     private final ConnectionController connectionController;
+    private final SyncController syncController;
     private final WebSocketService webSocketService;
     private final Path dbFile;
     private final AtomicInteger disconnections = new AtomicInteger();
-
     private final String username;
     private final String password;
+    private volatile boolean resyncOnConnect;
     private volatile String token;
 
     public TestClient(String username) {
@@ -75,6 +72,7 @@ public final class TestClient implements AutoCloseable {
         this.persistenceService = context.getBean(LocalPersistenceService.class);
         this.syncService = context.getBean(SyncService.class);
         this.connectionController = context.getBean(ConnectionController.class);
+        this.syncController = context.getBean(SyncController.class);
         this.webSocketService = context.getBean(WebSocketService.class);
         context.getBean(ClientStateModel.class).addConnectionStateListener(event -> {
             if (event.getNewValue() == ConnectionState.DISCONNECTED) {
@@ -115,8 +113,21 @@ public final class TestClient implements AutoCloseable {
             throw new IllegalStateException("Login returned no token for user " + username);
         }
         this.token = response.token();
-        context.getBean(ClientStateModel.class)
-                .setCurrentUser(new User(username));
+        ClientStateModel stateModel = context.getBean(ClientStateModel.class);
+        stateModel.setCurrentUser(new User(username));
+        stateModel.setAuthToken(new AuthToken(response.token(),
+                Instant.now().plusMillis(response.expiresInMs())));
+    }
+
+    /**
+     * Makes this client run the on-connect synchronisation, {@link SyncController#syncAll()},
+     * on every STOMP connection, including the reconnection that follows a Gateway {@code FORCE_RECONNECT}.
+     *
+     * @return this client
+     */
+    public TestClient resyncOnConnect() {
+        this.resyncOnConnect = true;
+        return this;
     }
 
     /**
@@ -140,7 +151,12 @@ public final class TestClient implements AutoCloseable {
             throw new IllegalStateException("Must login before connect for user " + username);
         }
         CompletableFuture<Void> connected = new CompletableFuture<>();
-        connectionController.setOnConnectedCallback(() -> connected.complete(null));
+        connectionController.setOnConnectedCallback(() -> {
+            connected.complete(null);
+            if (resyncOnConnect) {
+                syncController.syncAll();
+            }
+        });
         connectionController.connect(token);
         try {
             connected.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -148,6 +164,29 @@ public final class TestClient implements AutoCloseable {
             throw new AssertionError(
                     "STOMP CONNECT did not complete for user " + username
                             + " within " + timeout, e);
+        }
+        refreshLocalConversations(timeout);
+    }
+
+    /**
+     * Refreshes the user's conversations from the Gateway and saves them locally.
+     *
+     * @param timeout bounded wait for the REST call
+     */
+    public void refreshLocalConversations(Duration timeout) {
+        try {
+            List<ConversationDto> remote = syncService
+                    .fetchConversations(bearerHeader()).block(timeout);
+            if (remote == null || remote.isEmpty()) {
+                return;
+            }
+            persistenceService.saveConversationsBatch(remote.stream()
+                    .map(dto -> new Conversation(
+                            dto.conversationId(),
+                            new User(dto.otherParticipantUsername())))
+                    .toList());
+        } catch (RuntimeException ignored) {
+            // the conversation list is retried on the next connect
         }
     }
 
@@ -311,7 +350,7 @@ public final class TestClient implements AutoCloseable {
     }
 
     /**
-     * Performs a Full Sync and applies it to local SQLite persistence.
+     * Performs a full sync and applies it to local SQLite persistence.
      *
      * @param conversationId the conversation to sync
      * @param timeout        bounded wait for the REST call
@@ -319,6 +358,14 @@ public final class TestClient implements AutoCloseable {
      */
     public List<InboundMessageDto> syncAndPersist(String conversationId, Duration timeout) {
         SyncResponseDto response = syncConversation(conversationId, timeout);
+        List<InboundMessageDto> messages = response.messages();
+        if (messages != null && !messages.isEmpty()) {
+            InboundMessageDto first = messages.getFirst();
+            String peer = username.equalsIgnoreCase(first.senderUsername())
+                    ? first.recipientUsername()
+                    : first.senderUsername();
+            ensureLocalConversation(conversationId, peer);
+        }
         syncService.applySync(response, username);
         return response.messages();
     }

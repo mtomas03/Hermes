@@ -19,10 +19,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -228,10 +230,12 @@ class ConnectionControllerTest {
         Conversation open = new Conversation("alice-bob", new User("bob"));
         when(stateModel.getSelectedConversation()).thenReturn(open);
         InboundMessageDto dto = new InboundMessageDto(
-                "m1", "alice-bob", "bob", "alice",
-                "hi", 1L, "SENT");
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
         Message persisted = new Message(
-                "m1", "alice-bob", "bob", "alice",
+                "m1", "alice-bob",
+                "bob", "alice",
                 "hi", 1L, MessageStatus.SENT);
         when(msgService.receiveAndPersist(dto)).thenReturn(persisted);
 
@@ -249,12 +253,12 @@ class ConnectionControllerTest {
     @Test
     void inboundMessageForADifferentConversationShouldNotBeAppendedButStillAcked() {
         Conversation openedElsewhere = new Conversation(
-                "conv-other", new User("carol"));
+                "conv-other", new User("charlie"));
         when(stateModel.getSelectedConversation()).thenReturn(openedElsewhere);
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob",
                 "bob", "alice", "hi",
-                1L, "SENT");
+                1L, MessageStatus.SENT.name());
         when(msgService.receiveAndPersist(dto)).thenReturn(
                 new Message(
                         "m1", "alice-bob",
@@ -274,7 +278,7 @@ class ConnectionControllerTest {
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob",
                 "bob", "alice", "hi",
-                1L, "SENT");
+                1L, MessageStatus.SENT.name());
         when(msgService.receiveAndPersist(dto))
                 .thenThrow(new MessagePersistenceException("m1"));
 
@@ -327,7 +331,7 @@ class ConnectionControllerTest {
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob",
                 "bob", "alice", "hi",
-                1L, "SENT");
+                1L, MessageStatus.SENT.name());
 
         controller.connect("token123");
         verify(wsService).setOnMessage(inboundMessageCaptor.capture());
@@ -346,7 +350,7 @@ class ConnectionControllerTest {
         InboundMessageDto dto = new InboundMessageDto(
                 "m1", "alice-bob",
                 "bob", "alice", "hi",
-                1L, "SENT");
+                1L, MessageStatus.SENT.name());
 
         controller.connect("token123");
         verify(wsService).setOnMessage(inboundMessageCaptor.capture());
@@ -407,5 +411,93 @@ class ConnectionControllerTest {
 
         verify(wsService).disconnect();
         verify(stateModel).setConnectionState(ConnectionState.DISCONNECTED);
+    }
+
+
+    @Test
+    void inboundMessageOfAConversationStartedByOtherUserShouldBeStoredAckedAndListed() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        when(stateModel.getConversations()).thenReturn(List.of());
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
+        Message persisted = new Message(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT);
+        when(msgService.receiveAndPersist(dto, "alice")).thenReturn(persisted);
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(msgService).receiveAndPersist(dto, "alice");
+        verify(stateModel).setConversations(
+                List.of(new Conversation("alice-bob", new User("bob"))));
+        verify(wsService).sendAck("m1");
+    }
+
+    @Test
+    void inboundMessageOfAnAlreadyListedConversationShouldNotChangeTheConversationList() {
+        Conversation known = new Conversation("alice-bob", new User("bob"));
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        when(stateModel.getConversations()).thenReturn(List.of(known));
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
+        when(msgService.receiveAndPersist(dto, "alice")).thenReturn(new Message(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT));
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(stateModel, never()).setConversations(any());
+        verify(wsService).sendAck("m1");
+    }
+
+    @Test
+    void inboundMessageThatFailsToPersistShouldNotListItsConversationNorBeAcked() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        InboundMessageDto dto = new InboundMessageDto(
+                "m1", "alice-bob",
+                "bob", "alice",
+                "hi", 1L, MessageStatus.SENT.name());
+        when(msgService.receiveAndPersist(dto, "alice"))
+                .thenThrow(new MessagePersistenceException("m1"));
+
+        controller.connect("token123");
+        verify(wsService).setOnMessage(inboundMessageCaptor.capture());
+        inboundMessageCaptor.getValue().accept(dto);
+
+        verify(stateModel, never()).setConversations(any());
+        verify(wsService, never()).sendAck(any());
+    }
+
+    @Test
+    void sessionReadyMakesUnacknowledgedMessagesRetryableBeforeFlushingTheOutbox() {
+        when(stateModel.getCurrentUser()).thenReturn(new User("alice"));
+        controller.connect("token123");
+        verify(wsService).setOnReadyToSend(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+
+        InOrder order = inOrder(msgService);
+        order.verify(msgService, timeout(ASYNC_TIMEOUT_MS)).resetInFlight();
+        order.verify(msgService, timeout(ASYNC_TIMEOUT_MS)).flushOutbox("alice");
+    }
+
+    @Test
+    void losingTheConnectionMakesUnacknowledgedMessagesRetryable() {
+        controller.connect("token123");
+        verify(wsService).setOnDisconnected(runnableCaptor.capture());
+
+        runnableCaptor.getValue().run();
+
+        verify(msgService).resetInFlight();
     }
 }

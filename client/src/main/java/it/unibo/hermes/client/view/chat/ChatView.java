@@ -228,7 +228,7 @@ public class ChatView {
     private void updateChatTitle() {
         Conversation selected = stateModel.getSelectedConversation();
         if (selected != null) {
-            chatTitleLabel.setText("Chat with: " + selected.recipientUsername().username());
+            chatTitleLabel.setText("Chat with: " + selected.otherUser().username());
         } else {
             chatTitleLabel.setText("Enter a username to start");
         }
